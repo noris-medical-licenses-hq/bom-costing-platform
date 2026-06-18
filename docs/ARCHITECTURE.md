@@ -84,25 +84,28 @@ bom-costing-platform/
 User triggers "Calculate Cost" on a BOM
   │
   ▼
-API Route receives: bom_id, scenario_id
+API Route receives: bom_id, cost_set_id
   │
   ▼
-backend/services/costRollup.ts
-  ├── Fetch all BOM lines (recursive, ordered by depth)
-  ├── For each leaf component:
-  │     Resolve unit price:
-  │       1. scenario override (if exists)
-  │       2. active supplier price (latest effective_from ≤ today)
-  │       3. fallback: null → warn
-  ├── Roll up: parent cost = Σ(child qty × child unit cost)
-  ├── Apply overhead_pct and labor_rate from scenario
-  └── Return structured cost breakdown
+backend/services/costEngine.ts  (10-stage pipeline, BLUEPRINT §5)
+  ├── Stage 1:  Load approved BOM version + all lines (recursive)
+  ├── Stage 2:  Validation Engine pre-flight (V-BOM, V-SKU checks)
+  ├── Stage 3:  Resolve manual_cost_adjustments (Priority 0 — highest)
+  ├── Stage 4:  Resolve cost_set_items via 6-level precedence hierarchy
+  │               (SKU > SubFamily > Family > Supplier/Country > Global
+  │                > supplier_price > null+WARNING)
+  ├── Stage 5:  Apply active cost_rules (rule engine, ADR-107)
+  ├── Stage 6:  Process rule_exceptions
+  ├── Stage 7:  Roll up: parent cost = Σ(child qty × child unit cost)
+  ├── Stage 8:  Apply overhead and labor from cost_set_items
+  ├── Stage 9:  Write calculation_traces (immutable, ADR-104)
+  └── Stage 10: Return structured cost breakdown + trace_id
   │
   ▼
-Response: { total, breakdown_by_line, warnings[] }
+Response: { total, breakdown_by_line, trace_id, warnings[] }
   │
   ▼
-Frontend renders cost tree + PDF export
+Frontend renders cost tree + CSV export (PDF: Phase 2)
 ```
 
 ## Security Model

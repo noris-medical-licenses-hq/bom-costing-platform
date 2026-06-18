@@ -194,7 +194,7 @@ The platform uses a **unified item model**. An "item" is any entity that appears
 | make_buy | `make`, `buy`, `make_or_buy` |
 | unit_of_measure | pcs, kg, m, L, hr, etc. |
 | family_id | FK → Family |
-| sub_family_id | FK → SubFamily |
+| subfamily_id | FK → Subfamily |
 | lead_time_days | Procurement lead time |
 | is_regulated | Whether this item requires regulatory qualification |
 | default_supplier_id | Preferred supplier for procurement |
@@ -434,7 +434,7 @@ The previous model had `cost_scenarios` as a per-BOM construct. Cost Sets are or
 |-----------|-------------|
 | cost_set_id | FK → Cost Set |
 | item_type | `material_price`, `labor_rate`, `overhead_pct`, `freight_pct`, `duty_rate`, `tooling_fixed`, `custom` |
-| scope_type | `global`, `family`, `sub_family`, `sku`, `supplier`, `supplier_country` |
+| scope_type | `global`, `family`, `subfamily`, `sku`, `supplier`, `supplier_country` |
 | scope_id | ID of the scoped entity (null for global) |
 | value | Numeric value |
 | value_unit | `currency`, `percentage`, `rate_per_hour`, `rate_per_unit` |
@@ -1232,7 +1232,7 @@ Conditions are expressed as a triple: `(field, operator, value)`
 | Condition Field | Example Value |
 |----------------|---------------|
 | `sku.family_id` | UUID of a Family |
-| `sku.sub_family_id` | UUID of a SubFamily |
+| `sku.subfamily_id` | UUID of a Subfamily |
 | `sku.item_type` | `purchased_part` |
 | `sku.make_buy` | `buy` |
 | `supplier.country` | `CN` (ISO 3166-1) |
@@ -1369,12 +1369,12 @@ The Audit Log is **append-only**. No UPDATE or DELETE operations are permitted o
 
 ## 10.4 Data Mutation Audit (DB Trigger Strategy)
 
-A PostgreSQL trigger is installed on each business table. The trigger fires AFTER INSERT, UPDATE, DELETE and writes one row to `audit_events`. The trigger uses `auth.uid()` to capture the performing user from the active Supabase session.
+A PostgreSQL trigger is installed on each business table. The trigger fires AFTER INSERT, UPDATE, DELETE and writes one row to `audit_log`. The trigger uses `auth.uid()` to capture the performing user from the active Supabase session.
 
-**Tables covered by trigger:**
-organizations, profiles, skus, families, sub_families, suppliers, supplier_prices, boms, bom_versions, bom_lines, cost_sets, cost_items, cost_rules, rule_exceptions, virtual_components, inventory_snapshots, inventory_lines, sites, warehouses, projects
+**Tables covered by trigger (23 business tables):**
+organizations, profiles, families, subfamilies, skus, suppliers, supplier_prices, virtual_components, sites, warehouses, projects, cost_sets, cost_items, cost_rules, rule_conditions, rule_actions, rule_exceptions, manual_cost_adjustments, boms, bom_versions, bom_lines, inventory_snapshots, inventory_lines
 
-**`audit_events` is explicitly excluded from trigger coverage** (no trigger on the audit table itself — this prevents recursive logging).
+**`audit_log` is explicitly excluded from trigger coverage** (no trigger on the audit table itself — this prevents recursive logging). Explainability, calculation trace, and validation tables are also excluded — they are system-written and immutable by design.
 
 ## 10.5 Immutability Requirements
 
@@ -1655,14 +1655,14 @@ The rewrite must define all tables in the following order:
 
 ```
 Tier 1 — Foundation (no FKs to business entities)
-  organizations, families, sub_families, sites, warehouses, projects,
+  organizations, families, subfamilies, sites, warehouses, projects,
   virtual_components
 
 Tier 2 — Identity
   profiles (FK → auth.users, organizations)
 
 Tier 3 — Item Domain
-  skus (FK → organizations, families, sub_families)
+  skus (FK → organizations, families, subfamilies)
   suppliers (FK → organizations)
   supplier_prices (FK → skus, suppliers, profiles)
 
