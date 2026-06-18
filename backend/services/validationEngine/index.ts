@@ -19,15 +19,32 @@ import { validateBomLineQuantities } from './rules/bom/V-BOM-004'
 import { validateNoBomCycle } from './rules/bom/V-BOM-005'
 import { validateNoBomLinesWithArchivedSkus } from './rules/bom/V-BOM-006'
 import { validateSubAssemblyMakeBuy } from './rules/bom/V-BOM-007'
+// SKU validators
+import { validateSkuPartNumberUnique } from './rules/sku/V-SKU-001'
 import { validateBomSkuSubfamilies } from './rules/sku/V-SKU-002'
+import { validateNoDiscontinuedSkuInActiveBom } from './rules/sku/V-SKU-003'
+import { validateSkuHasActiveCost } from './rules/sku/V-SKU-004'
 // Cost validators
 import { validateCostItemCurrencies } from './rules/cost/V-COST-001'
+import { validateNoCostItemDateOverlap } from './rules/cost/V-COST-002'
+import { validateScrapRateRange } from './rules/cost/V-COST-003'
+import { validateGlobalOverheadExists } from './rules/cost/V-COST-004'
+import { validateSupplierPricesCoveredByCostItems } from './rules/cost/V-COST-005'
+// Rule validators
+import { validateRuleConditionFields } from './rules/rule/V-RULE-001'
+import { validateRuleActionValues } from './rules/rule/V-RULE-002'
+import { validateActiveRuleHasConditions } from './rules/rule/V-RULE-003'
+import { validateNoStaleExceptions } from './rules/rule/V-RULE-004'
+// Inventory validators
+import { validateInventorySkusHaveBoms } from './rules/inventory/V-INV-001'
+import { validateInventoryLinesHaveCosts } from './rules/inventory/V-INV-002'
+import { validateSnapshotTotalNotZero } from './rules/inventory/V-INV-003'
+import { validateSnapshotHasNoOpenErrors } from './rules/inventory/V-INV-004'
 
 export async function runValidationEngine(
   input: ValidationRunInput,
   client: SupabaseServerClient
 ): Promise<ValidationResult> {
-  // Create the validation run record
   const { data: { user } } = await client.auth.getUser()
   const orgIdResult = await client.rpc('auth_org_id').maybeSingle()
   const orgId: string = (orgIdResult.data as string | null) ?? ''
@@ -48,27 +65,42 @@ export async function runValidationEngine(
   const allFindings: ValidationFindingInput[] = []
 
   try {
-    // Run validators based on scope
     if (input.scope_type === 'bom_version' && input.scope_id) {
-      const bomVersionId = input.scope_id
-      const bomFindings = await runBomValidators(bomVersionId, client)
-      allFindings.push(...bomFindings)
+      allFindings.push(...await runBomValidators(input.scope_id, client))
+    }
+
+    if (input.scope_type === 'sku' && input.scope_id) {
+      allFindings.push(...await runSkuValidators(input.scope_id, client))
     }
 
     if (input.scope_type === 'cost_set' && input.scope_id) {
-      const costFindings = await validateCostItemCurrencies(input.scope_id, client)
-      allFindings.push(...costFindings)
+      allFindings.push(...await runCostSetValidators(input.scope_id, client))
     }
 
-    // Persist findings
+    if (input.scope_type === 'rule' && input.scope_id) {
+      allFindings.push(...await runRuleValidators(input.scope_id, client))
+    }
+
+    if (input.scope_type === 'inventory_snapshot' && input.scope_id) {
+      allFindings.push(...await runInventoryValidators(input.scope_id, client))
+    }
+
+    if (input.scope_type === 'organization') {
+      // Org-wide sweep: not implemented — too broad for on-demand; use scheduled runs
+    }
+
     if (allFindings.length > 0) {
       await createFindingsBatch(
-        allFindings.map(f => ({ ...f, organization_id: run.organization_id, validation_run_id: run.id, status: 'open' as const })),
+        allFindings.map(f => ({
+          ...f,
+          organization_id: run.organization_id,
+          validation_run_id: run.id,
+          status: 'open' as const,
+        })),
         client
       )
     }
 
-    // Auto-resolve stale findings (OQ-07)
     const activeCodes = [...new Set(allFindings.map(f => f.rule_code))]
     let autoResolvedCount = 0
     if (input.scope_id) {
@@ -92,7 +124,7 @@ export async function runValidationEngine(
 
 async function runBomValidators(bomVersionId: string, client: SupabaseServerClient): Promise<ValidationFindingInput[]> {
   const findings: ValidationFindingInput[] = []
-  const validators = [
+  for (const validator of [
     validateBomHasLines,
     validateBomLinesReferenceActiveSkus,
     validateNoDuplicateBomLines,
@@ -101,9 +133,60 @@ async function runBomValidators(bomVersionId: string, client: SupabaseServerClie
     validateNoBomLinesWithArchivedSkus,
     validateSubAssemblyMakeBuy,
     validateBomSkuSubfamilies,
-  ]
-  for (const validator of validators) {
+  ]) {
     findings.push(...await validator(bomVersionId, client))
+  }
+  return findings
+}
+
+async function runSkuValidators(skuId: string, client: SupabaseServerClient): Promise<ValidationFindingInput[]> {
+  const findings: ValidationFindingInput[] = []
+  for (const validator of [
+    validateSkuPartNumberUnique,
+    validateNoDiscontinuedSkuInActiveBom,
+    validateSkuHasActiveCost,
+  ]) {
+    findings.push(...await validator(skuId, client))
+  }
+  return findings
+}
+
+async function runCostSetValidators(costSetId: string, client: SupabaseServerClient): Promise<ValidationFindingInput[]> {
+  const findings: ValidationFindingInput[] = []
+  for (const validator of [
+    validateCostItemCurrencies,
+    validateNoCostItemDateOverlap,
+    validateScrapRateRange,
+    validateGlobalOverheadExists,
+    validateSupplierPricesCoveredByCostItems,
+  ]) {
+    findings.push(...await validator(costSetId, client))
+  }
+  return findings
+}
+
+async function runRuleValidators(ruleId: string, client: SupabaseServerClient): Promise<ValidationFindingInput[]> {
+  const findings: ValidationFindingInput[] = []
+  for (const validator of [
+    validateRuleConditionFields,
+    validateRuleActionValues,
+    validateActiveRuleHasConditions,
+    validateNoStaleExceptions,
+  ]) {
+    findings.push(...await validator(ruleId, client))
+  }
+  return findings
+}
+
+async function runInventoryValidators(snapshotId: string, client: SupabaseServerClient): Promise<ValidationFindingInput[]> {
+  const findings: ValidationFindingInput[] = []
+  for (const validator of [
+    validateInventorySkusHaveBoms,
+    validateInventoryLinesHaveCosts,
+    validateSnapshotTotalNotZero,
+    validateSnapshotHasNoOpenErrors,
+  ]) {
+    findings.push(...await validator(snapshotId, client))
   }
   return findings
 }
