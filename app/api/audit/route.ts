@@ -6,6 +6,9 @@ import { listAuditLog } from '@/backend/repositories/auditRepository'
 export async function GET(request: NextRequest) {
   try {
     const client = await createServerSupabaseClient()
+    const { data: { user } } = await client.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const { searchParams } = new URL(request.url)
     const result = await listAuditLog({
       table_name: searchParams.get('table') ?? undefined,

@@ -49,6 +49,7 @@ const requiredScripts = [
   'scripts/generate-types.js',
   'scripts/smoke-test.js',
   'scripts/preflight-check.js',
+  'scripts/bootstrap-org.js',
 ]
 for (const script of requiredScripts) {
   if (existsSync(join(ROOT, script))) ok(script)
@@ -84,7 +85,7 @@ const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'))
 const requiredPackageScripts = [
   'dev', 'build', 'test', 'typecheck',
   'check-env', 'verify-migrations', 'apply-seed', 'generate-types',
-  'smoke-test', 'preflight-check',
+  'smoke-test', 'preflight-check', 'bootstrap-org',
 ]
 for (const s of requiredPackageScripts) {
   if (pkg.scripts?.[s]) ok(`npm run ${s}`)
@@ -163,8 +164,14 @@ else wa('backend/types/database.generated.ts not found — run: npm run generate
 // ─── 8. .env.example completeness ─────────────────────────────────────────────
 if (existsSync(envExample)) {
   const envContent = readFileSync(envExample, 'utf8')
-  const required = ['NEXT_PUBLIC_SUPABASE_URL', 'NEXT_PUBLIC_SUPABASE_ANON_KEY', 'SUPABASE_SERVICE_ROLE_KEY']
-  for (const v of required) {
+  const envVars = [
+    'NEXT_PUBLIC_SUPABASE_URL',
+    'NEXT_PUBLIC_SUPABASE_ANON_KEY',
+    'SUPABASE_SERVICE_ROLE_KEY',
+    'WEBHOOK_SECRET',
+    'DEFAULT_ORGANIZATION_ID',
+  ]
+  for (const v of envVars) {
     if (envContent.includes(v)) ok(`.env.local.example documents ${v}`)
     else wa(`.env.local.example missing ${v}`)
   }

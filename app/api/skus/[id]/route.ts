@@ -24,6 +24,9 @@ type RouteParams = { params: { id: string } }
 export async function GET(_req: NextRequest, { params }: RouteParams) {
   try {
     const client = await createServerSupabaseClient()
+    const { data: { user } } = await client.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const sku = await findSkuById(params.id, client)
     return NextResponse.json({ data: sku })
   } catch (err) {

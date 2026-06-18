@@ -118,7 +118,12 @@ export default function BomPage() {
               <div style={{ fontSize: '28px', fontWeight: 700, color: '#1a1a2e' }}>
                 {calcResult.currency} {calcResult.totalUnitCost.toFixed(4)}
               </div>
-              <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>Calculated in {calcResult.durationMs}ms · Trace: <code>{calcResult.traceId}</code></div>
+              <div style={{ fontSize: '12px', color: '#888', marginTop: '4px' }}>
+                Calculated in {calcResult.durationMs}ms ·{' '}
+                <a href={`/traces?id=${calcResult.traceId}`} style={{ color: '#1a1a2e', fontFamily: 'monospace' }}>
+                  View trace {calcResult.traceId.slice(0, 8)}...
+                </a>
+              </div>
             </div>
             {calcResult.warnings.length > 0 && (
               <div style={{ background: '#fff8e1', border: '1px solid #ffe082', borderRadius: '6px', padding: '12px', maxWidth: '300px' }}>

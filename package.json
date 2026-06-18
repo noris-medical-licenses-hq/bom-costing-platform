@@ -20,7 +20,8 @@
     "apply-seed": "node scripts/apply-seed.js",
     "generate-types": "node scripts/generate-types.js",
     "smoke-test": "node scripts/smoke-test.js",
-    "preflight-check": "node scripts/preflight-check.js"
+    "preflight-check": "node scripts/preflight-check.js",
+    "bootstrap-org": "node scripts/bootstrap-org.js"
   },
   "dependencies": {
     "next": "^14.2.0",

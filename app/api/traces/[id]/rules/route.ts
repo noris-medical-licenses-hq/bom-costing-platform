@@ -5,6 +5,9 @@ type RouteParams = { params: { id: string } }
 
 export async function GET(_: NextRequest, { params }: RouteParams) {
   const client = await createServerSupabaseClient()
+  const { data: { user } } = await client.auth.getUser()
+  if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
   const { data, error } = await client
     .from('rule_execution_traces')
     .select('id, cost_rule_id, rule_name_snapshot, condition_result, was_applied, value_before, value_after, delta')

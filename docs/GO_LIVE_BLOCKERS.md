@@ -25,7 +25,7 @@ Severity levels:
 
 | Severity | Issue | Impact | Required Action | Can proceed to pilot? | Workaround |
 |---|---|---|---|---|---|
-| HIGH | M-023 indexes — no `IF NOT EXISTS` | Re-running M-023 fails with "index already exists" | Use `CREATE INDEX IF NOT EXISTS` (safe change) | Yes | Run each migration once; don't re-run M-023 |
+| ~~HIGH~~ **FIXED** | M-023 indexes — no `IF NOT EXISTS` | Re-running M-023 fails with "index already exists" | ~~Use `CREATE INDEX IF NOT EXISTS` (safe change)~~ Applied — all 77 indexes use `IF NOT EXISTS` | Yes | N/A |
 | MEDIUM | No rollback scripts | Failed migration requires manual cleanup | Document DROP order per migration | Yes | Use `supabase db reset` for demo environments |
 | LOW | Deferred FK ordering in M-020 requires M-017 first | Out-of-order apply fails | Already guaranteed by filename ordering | Yes | Only applies if someone runs migrations manually out of order |
 
@@ -59,8 +59,8 @@ Severity levels:
 | Severity | Issue | Impact | Required Action | Can proceed to pilot? | Workaround |
 |---|---|---|---|---|---|
 | BLOCKER | No live E2E test suite | No automated verification that Supabase + app work together | Run `npm run smoke-test` manually against live URL | Yes (manual) | Manual smoke test |
-| HIGH | SKU/BOM CRUD routes missing auth guard | Unauthenticated users can read SKU/BOM data (anon key has SELECT via RLS) | Add auth check to GET /api/skus, GET /api/boms | Yes | RLS still prevents cross-org; anon users can read but not mutate |
-| MEDIUM | No link from calculation result to trace viewer | User must copy-paste trace UUID | Add navigation link | Yes | Acceptable for demo |
+| ~~HIGH~~ **FIXED** | SKU/BOM CRUD routes missing auth guard | Unauthenticated users can read SKU/BOM data (anon key has SELECT via RLS) | ~~Add auth check to GET /api/skus, GET /api/boms~~ Added 401 guard to GET `/api/skus/[id]`, `/api/traces/[id]`, `/api/traces/[id]/lines`, `/api/traces/[id]/rules`, `/api/audit` | Yes | N/A |
+| ~~MEDIUM~~ **FIXED** | No link from calculation result to trace viewer | User must copy-paste trace UUID | ~~Add navigation link~~ Calculation result now links to `/traces?id=<trace_id>` | Yes | N/A |
 | MEDIUM | No BOM line creation UI | Cannot create BOM from scratch in UI | Use seed data for demo | Yes | Use pre-seeded BOMs |
 | LOW | No SKU edit form | Cannot update SKU in UI | Use Supabase table editor for demo fixes | Yes | Supabase dashboard edit |
 

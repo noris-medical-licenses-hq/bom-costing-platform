@@ -11,8 +11,10 @@ const required = [
 ]
 
 const optional = [
-  { key: 'NEXT_PUBLIC_SITE_URL', hint: 'e.g. https://bom.norismedical.com or http://localhost:3000' },
-  { key: 'SUPABASE_DB_URL',     hint: 'postgres://... — needed for direct psql access and seeding' },
+  { key: 'NEXT_PUBLIC_SITE_URL',        hint: 'e.g. https://bom.norismedical.com or http://localhost:3000' },
+  { key: 'SUPABASE_DB_URL',             hint: 'postgres://... — needed for direct psql access and seeding' },
+  { key: 'WEBHOOK_SECRET',              hint: 'Random secret ≥32 chars — required for auth webhook profile creation' },
+  { key: 'DEFAULT_ORGANIZATION_ID',     hint: 'UUID from organizations table — required for auth webhook' },
 ]
 
 let exitCode = 0
