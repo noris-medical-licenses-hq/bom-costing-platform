@@ -19,7 +19,8 @@
     "verify-migrations": "node scripts/verify-migrations.js",
     "apply-seed": "node scripts/apply-seed.js",
     "generate-types": "node scripts/generate-types.js",
-    "smoke-test": "node scripts/smoke-test.js"
+    "smoke-test": "node scripts/smoke-test.js",
+    "preflight-check": "node scripts/preflight-check.js"
   },
   "dependencies": {
     "next": "^14.2.0",
