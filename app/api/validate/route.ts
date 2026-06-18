@@ -11,16 +11,21 @@ const ValidateSchema = z.object({
 
 export async function POST(request: NextRequest) {
   try {
-    const body = await request.json()
+    const body = await request.json().catch(() => null)
+    if (!body || typeof body !== 'object') {
+      return NextResponse.json({ error: 'Request body must be JSON' }, { status: 400 })
+    }
     const parsed = ValidateSchema.safeParse(body)
     if (!parsed.success) {
       return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })
     }
     const client = await createServerSupabaseClient()
+    const { data: { user } } = await client.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const result = await runValidationEngine(parsed.data, client)
-    const statusCode = result.errorCount > 0 ? 200 : 200 // always 200 — findings in body
-    return NextResponse.json({ data: result }, { status: statusCode })
-  } catch (err) {
+    return NextResponse.json({ data: result })
+  } catch {
     return NextResponse.json({ error: 'Validation run failed' }, { status: 500 })
   }
 }

@@ -14,7 +14,12 @@
     "db:generate-types": "supabase gen types typescript --local > backend/types/database.generated.ts",
     "db:push": "supabase db push",
     "db:reset": "supabase db reset",
-    "check-migrations": "node scripts/check-migrations.js"
+    "check-migrations": "node scripts/check-migrations.js",
+    "check-env": "node scripts/check-env.js",
+    "verify-migrations": "node scripts/verify-migrations.js",
+    "apply-seed": "node scripts/apply-seed.js",
+    "generate-types": "node scripts/generate-types.js",
+    "smoke-test": "node scripts/smoke-test.js"
   },
   "dependencies": {
     "next": "^14.2.0",
