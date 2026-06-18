@@ -28,14 +28,16 @@ const CreateSchema = z.object({
   notes:               z.string().optional(),
 })
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const client = await createServerSupabaseClient()
     const { data: { user } } = await client.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
     const db = client as any
-    const { data, error } = await db
+    const snapshotId = request.nextUrl.searchParams.get('snapshotId')
+
+    let q = db
       .from('valuation_reports')
       .select(`
         id, snapshot_id, cost_set_id, valuation_currency, valuation_scenario,
@@ -46,6 +48,10 @@ export async function GET() {
         cost_sets(name, base_currency)
       `)
       .order('created_at', { ascending: false })
+
+    if (snapshotId) q = q.eq('snapshot_id', snapshotId)
+
+    const { data, error } = await q
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     return NextResponse.json({ data: data ?? [] })

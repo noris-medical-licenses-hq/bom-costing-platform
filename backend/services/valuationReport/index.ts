@@ -2,6 +2,9 @@
 // Computes frozen per-line values against a chosen cost set and currency.
 // Does NOT modify inventory_lines or inventory_snapshots.
 // All computed values are written to valuation_report_lines (write-once).
+// IMPORTANT: costs are resolved ONLY from cost_items in the specified cost_set.
+// There is no supplier_prices fallback — the cost_set must be produced by a
+// Site Cost Build before running a valuation report.
 
 import type { SupabaseServiceClient } from '../../lib/supabase'
 
@@ -96,13 +99,15 @@ export async function runValuationReport(
   const skuIds = [...new Set(filteredLines.map(l => l.sku_id))]
   const { data: skuRows } = await db
     .from('skus')
-    .select('id, make_buy, family_id, subfamily_id, default_supplier_id')
+    .select('id, family_id, subfamily_id')
     .in('id', skuIds)
 
-  const skuMap = new Map<string, { make_buy: string; family_id: string | null; subfamily_id: string | null; default_supplier_id: string | null }>()
+  const skuMap = new Map<string, { family_id: string | null; subfamily_id: string | null }>()
   for (const s of skuRows ?? []) skuMap.set(s.id, s)
 
-  // ── 6. Bulk-load cost items for the cost set ─────────────────────────────────
+  // ── 6. Bulk-load cost items for the cost set ──────────────────────────────────
+  // Costs come exclusively from the cost_set produced by a Site Cost Build.
+  // No supplier_prices fallback — run a Cost Build first to populate the cost_set.
 
   const { data: costItemRows } = await db
     .from('cost_items')
@@ -116,7 +121,7 @@ export async function runValuationReport(
   type CostItemRow = { id: string; scope_type: string; scope_id: string | null; value: number; currency: string }
   const costItems: CostItemRow[] = costItemRows ?? []
 
-  // Build lookup: keep highest effective_from per key (already sorted DESC, so first wins)
+  // Keep highest effective_from per key (sorted DESC, first wins)
   const costByKey = new Map<string, CostItemRow>()
   for (const ci of costItems) {
     const key = ci.scope_type === 'global' ? 'global:' : `${ci.scope_type}:${ci.scope_id}`
@@ -125,12 +130,11 @@ export async function runValuationReport(
 
   function resolveCostItem(skuId: string): { cost: CostItemRow; source: string } | null {
     const sku = skuMap.get(skuId)
-    if (!sku) return null
 
     const precedences: Array<[string, string | null]> = [
       ['sku', skuId],
-      ['subfamily', sku.subfamily_id],
-      ['family', sku.family_id],
+      ['subfamily', sku?.subfamily_id ?? null],
+      ['family', sku?.family_id ?? null],
       ['global', null],
     ]
     for (const [scopeType, scopeId] of precedences) {
@@ -142,35 +146,7 @@ export async function runValuationReport(
     return null
   }
 
-  // ── 7. Bulk-load supplier prices as fallback ──────────────────────────────────
-
-  const { data: spRows } = await db
-    .from('supplier_prices')
-    .select('id, sku_id, unit_price, currency, supplier_id')
-    .in('sku_id', skuIds)
-    .lte('effective_from', valuationDate)
-    .or(`effective_to.is.null,effective_to.gte.${valuationDate}`)
-    .order('unit_price', { ascending: true })
-
-  type SpRow = { id: string; sku_id: string; unit_price: number; currency: string; supplier_id: string }
-  const spBySku = new Map<string, SpRow[]>()
-  for (const sp of (spRows ?? []) as SpRow[]) {
-    const arr = spBySku.get(sp.sku_id) ?? []
-    arr.push(sp)
-    spBySku.set(sp.sku_id, arr)
-  }
-
-  function resolveSupplierPrice(skuId: string): { cost: { id: string; value: number; currency: string }; source: string } | null {
-    const sku = skuMap.get(skuId)
-    const prices = spBySku.get(skuId) ?? []
-    if (!prices.length) return null
-    const defaultSupplier = sku?.default_supplier_id
-    const preferred = defaultSupplier ? prices.find(p => p.supplier_id === defaultSupplier) : null
-    const sp = preferred ?? prices[0]
-    return { cost: { id: sp.id, value: sp.unit_price, currency: sp.currency }, source: 'supplier_price' }
-  }
-
-  // ── 8. Compute lines ─────────────────────────────────────────────────────────
+  // ── 7. Compute lines ──────────────────────────────────────────────────────────
 
   const reportLines: Record<string, unknown>[] = []
   let totalValue = 0
@@ -178,13 +154,11 @@ export async function runValuationReport(
   let missingCostCount = 0
 
   for (const line of filteredLines) {
-    const costResolved = resolveCostItem(line.sku_id) ?? resolveSupplierPrice(line.sku_id)
+    const costResolved = resolveCostItem(line.sku_id)
 
     const sourceCcy    = costResolved?.cost.currency ?? report.valuation_currency
     const unitCostSrc  = costResolved?.cost.value ?? null
-    const costItemId   = costResolved?.source === 'cost_set_item'
-      ? (costResolved as { cost: CostItemRow; source: string }).cost.id
-      : null
+    const costItemId   = costResolved ? costResolved.cost.id : null
     const fxRate       = getFxRate(sourceCcy, report.valuation_currency)
     const unitCostVal  = unitCostSrc != null && fxRate != null ? unitCostSrc * fxRate : null
     const lineTotal    = unitCostVal != null ? line.quantity * unitCostVal : null

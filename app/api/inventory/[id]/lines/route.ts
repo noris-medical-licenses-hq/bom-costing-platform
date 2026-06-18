@@ -15,11 +15,28 @@ const InventoryLineSchema = z.object({
 
 type RouteParams = { params: { id: string } }
 
-export async function GET(_req: NextRequest, { params }: RouteParams) {
+export async function GET(req: NextRequest, { params }: RouteParams) {
   try {
     const client = await createServerSupabaseClient()
-    const lines = await listInventoryLines(params.id, client)
-    return NextResponse.json({ data: lines })
+    const { data: { user } } = await client.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const limit = parseInt(req.nextUrl.searchParams.get('limit') ?? '500', 10)
+    const db = client as any
+
+    const { data, error } = await db
+      .from('inventory_lines')
+      .select(`
+        id, sku_id, warehouse_id, quantity, unit_cost, notes,
+        skus(part_number, name, sku_type, item_cost_type),
+        warehouses(code, name)
+      `)
+      .eq('snapshot_id', params.id)
+      .order('skus(part_number)')
+      .limit(limit)
+
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    return NextResponse.json({ data: data ?? [] })
   } catch {
     return NextResponse.json({ error: 'Failed to fetch inventory lines' }, { status: 500 })
   }
