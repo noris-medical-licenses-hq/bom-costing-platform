@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createServerSupabaseClient, createServiceSupabaseClient } from '@/backend/lib/supabase'
+import { recordMappingUsage } from '@/backend/lib/importMapping'
 
 const Schema = z.object({
   importType: z.enum([
@@ -53,6 +54,9 @@ export async function POST(request: NextRequest) {
     if (error || !job) {
       return NextResponse.json({ error: error?.message ?? 'Failed to create import job' }, { status: 500 })
     }
+
+    // Record mapping usage for future suggestion improvement (fire-and-forget)
+    recordMappingUsage(orgId, importType, mapping, client).catch(() => {})
 
     return NextResponse.json({ jobId: job.id, totalRows }, { status: 201 })
   } catch (err) {
