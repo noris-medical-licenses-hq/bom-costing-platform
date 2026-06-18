@@ -85,8 +85,8 @@ async function check(label, path, opts = {}) {
   await check('GET /api/cost-sets',   '/api/cost-sets',   { expectJson: true })
   await check('GET /api/rules',       '/api/rules',       { expectJson: true })
   await check('GET /api/suppliers',   '/api/suppliers',   { expectJson: true })
-  await check('GET /api/audit',       '/api/audit',       { expectJson: true })
-  await check('Trace 404',            '/api/traces/nonexistent-id', { expectStatus: 404, expectJson: true })
+  await check('GET /api/audit (401)',  '/api/audit',       { expectStatus: 401, expectJson: true })
+  await check('Trace (401)',           '/api/traces/nonexistent-id', { expectStatus: 401, expectJson: true })
 
   // Summary
   const total = passed + failed
