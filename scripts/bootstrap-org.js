@@ -77,12 +77,9 @@ async function main() {
 
   if (orgError) {
     if (orgError.code === '23505') {
-      console.error(`\n❌ Organization with slug '${orgSlug}' already exists.`)
-      console.error('   Change ORG_SLUG to a unique value or query the existing org UUID.')
-    } else {
-      console.error('\n❌ Failed to create organization:', orgError.message)
+      throw new Error(`Organization with slug '${orgSlug}' already exists. Change ORG_SLUG to a unique value or query the existing org UUID.`)
     }
-    process.exit(1)
+    throw new Error(`Failed to create organization: ${orgError.message}`)
   }
 
   console.log('\n✅ Organization created successfully.')
@@ -95,16 +92,12 @@ async function main() {
 
     const { data: users, error: listError } = await client.auth.admin.listUsers()
     if (listError) {
-      console.error('❌ Failed to list auth users:', listError.message)
-      console.error('   Ensure SUPABASE_SERVICE_ROLE_KEY has admin access.')
-      process.exit(1)
+      throw new Error(`Failed to list auth users: ${listError.message}\n   Ensure SUPABASE_SERVICE_ROLE_KEY has admin access.`)
     }
 
     const authUser = users?.users?.find(u => u.email === userEmail)
     if (!authUser) {
-      console.error(`❌ No auth user found with email: ${userEmail}`)
-      console.error('   Have the user sign up first, then run this script again.')
-      process.exit(1)
+      throw new Error(`No auth user found with email: ${userEmail}\n   Have the user sign up first, then re-run with USER_EMAIL set.`)
     }
 
     console.log(`Found auth user: ${authUser.id}`)
@@ -114,7 +107,7 @@ async function main() {
       .insert({
         id: authUser.id,
         organization_id: orgId,
-        full_name: (authUser.user_metadata?.full_name as string) ?? userEmail.split('@')[0],
+        full_name: authUser.user_metadata?.full_name ?? userEmail.split('@')[0],
         email: userEmail,
         role: 'admin',
         is_active: true,
@@ -124,8 +117,7 @@ async function main() {
       if (profileError.code === '23505') {
         console.warn(`⚠️  Profile already exists for ${userEmail}. Skipping.`)
       } else {
-        console.error('❌ Failed to create profile:', profileError.message)
-        process.exit(1)
+        throw new Error(`Failed to create profile: ${profileError.message}`)
       }
     } else {
       console.log(`✅ Admin profile created for ${userEmail}`)
@@ -146,6 +138,6 @@ async function main() {
 }
 
 main().catch(err => {
-  console.error('Unexpected error:', err)
-  process.exit(1)
+  console.error('\n❌', err.message)
+  process.exitCode = 1
 })
