@@ -25,15 +25,16 @@ export async function POST(request: NextRequest) {
       traceLevel: parsed.data.trace_level,
     }, client)
     return NextResponse.json({ data: result })
-  } catch (err: any) {
-    if (err.message?.includes('Validation errors block calculation')) {
-      return NextResponse.json({ error: err.message }, { status: 422 })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : ''
+    if (message.includes('Validation errors block calculation')) {
+      return NextResponse.json({ error: message }, { status: 422 })
     }
-    if (err.message?.includes('No approved BOM version')) {
-      return NextResponse.json({ error: err.message }, { status: 404 })
+    if (message.includes('No approved BOM version')) {
+      return NextResponse.json({ error: message }, { status: 404 })
     }
-    if (err.message?.includes('cycle')) {
-      return NextResponse.json({ error: err.message }, { status: 422 })
+    if (message.includes('cycle')) {
+      return NextResponse.json({ error: message }, { status: 422 })
     }
     return NextResponse.json({ error: 'Cost calculation failed' }, { status: 500 })
   }

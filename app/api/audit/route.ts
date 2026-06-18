@@ -17,8 +17,10 @@ export async function GET(request: NextRequest) {
       cursor: searchParams.get('cursor') ?? undefined,
     }, client)
     return NextResponse.json(result)
-  } catch (err: any) {
-    if (err.code === 'RLS_DENIED') return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+  } catch (err) {
+    if (err instanceof Error && 'code' in err && (err as { code?: string }).code === 'RLS_DENIED') {
+      return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+    }
     return NextResponse.json({ error: 'Failed to fetch audit log' }, { status: 500 })
   }
 }

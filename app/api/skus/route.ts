@@ -21,8 +21,9 @@ export async function GET(request: NextRequest) {
   try {
     const client = await createServerSupabaseClient()
     const { searchParams } = new URL(request.url)
+    const statusParam = searchParams.get('status') as 'draft' | 'active' | 'discontinued' | 'archived' | null
     const skus = await listSkus({
-      status: (searchParams.get('status') as any) ?? 'active',
+      status: statusParam ?? 'active',
       family_id: searchParams.get('family_id') ?? undefined,
       subfamily_id: searchParams.get('subfamily_id') ?? undefined,
       search: searchParams.get('q') ?? undefined,
@@ -41,10 +42,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })
     }
     const client = await createServerSupabaseClient()
-    const sku = await createSku(parsed.data as any, client)
+    const { data: { user } } = await client.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const orgIdResult = await client.rpc('auth_org_id').maybeSingle()
+    const orgId = (orgIdResult.data as string | null) ?? ''
+
+    const sku = await createSku({
+      ...parsed.data,
+      organization_id: orgId,
+      description: parsed.data.description ?? null,
+      family_id: parsed.data.family_id ?? null,
+      subfamily_id: parsed.data.subfamily_id ?? null,
+      default_supplier_id: parsed.data.default_supplier_id ?? null,
+      lead_time_days: parsed.data.lead_time_days ?? null,
+      created_by: user.id,
+      updated_by: user.id,
+    }, client)
     return NextResponse.json({ data: sku }, { status: 201 })
-  } catch (err: any) {
-    if (err.code === 'RLS_DENIED') return NextResponse.json({ error: 'Insufficient permissions' }, { status: 403 })
+  } catch {
     return NextResponse.json({ error: 'Failed to create SKU' }, { status: 500 })
   }
 }
