@@ -14,6 +14,7 @@ import type {
   AppliedRuleException,
 } from './types'
 import { detectBomCycle } from './cycle'
+import { applyAction, evaluateConditions, exceptionAppliesToSku } from './math'
 import {
   findApprovedBomVersion,
   loadBomTree,
@@ -448,60 +449,6 @@ function getCurrentCost(skuId: string, resolvedCostMap: ResolvedCostMap, manualA
   return resolvedCostMap.get(skuId)?.unitCost ?? 0
 }
 
-function applyAction(action: Tables<'rule_actions'>, currentValue: number): number {
-  const v = action.action_value
-  switch (action.action_type) {
-    case 'add_percentage':    return currentValue * (1 + (v ?? 0) / 100)
-    case 'add_fixed':         return currentValue + (v ?? 0)
-    case 'multiply':          return currentValue * (v ?? 1)
-    case 'replace_cost':      return v ?? currentValue
-    case 'cap_at_value':      return v !== null ? Math.min(currentValue, v) : currentValue
-    case 'floor_at_value':    return v !== null ? Math.max(currentValue, v) : currentValue
-    case 'exclude_from_rollup': return 0
-    default:                  return currentValue
-  }
-}
-
-function evaluateConditions(conditions: RuleCondition[], sku: Sku): boolean {
-  if (conditions.length === 0) return true
-  // Group by logical_group; groups are OR'd, conditions within a group are AND'd
-  const groups = conditions.reduce<Record<number, RuleCondition[]>>((acc, c) => {
-    ;(acc[c.logical_group] ??= []).push(c)
-    return acc
-  }, {})
-  return Object.values(groups).some(group => group.every(cond => evaluateSingleCondition(cond, sku)))
-}
-
-function evaluateSingleCondition(cond: RuleCondition, sku: Sku): boolean {
-  const value = getSkuField(cond.condition_field, sku)
-  const target = cond.condition_value
-  switch (cond.condition_operator) {
-    case 'equals':      return String(value ?? '') === target
-    case 'not_equals':  return String(value ?? '') !== target
-    case 'in':          return target.split(',').map(s => s.trim()).includes(String(value ?? ''))
-    case 'not_in':      return !target.split(',').map(s => s.trim()).includes(String(value ?? ''))
-    case 'greater_than': return Number(value) > Number(target)
-    case 'less_than':   return Number(value) < Number(target)
-    case 'is_null':     return value === null || value === undefined
-    case 'is_not_null': return value !== null && value !== undefined
-    default:            return false
-  }
-}
-
-function getSkuField(field: string, sku: Sku): unknown {
-  const [table, column] = field.split('.')
-  if (table === 'sku') return (sku as Record<string, unknown>)[column]
-  return undefined
-}
-
-function exceptionAppliesToSku(ex: RuleException, skuId: string, sku: Sku): boolean {
-  switch (ex.exception_scope_type) {
-    case 'sku':        return ex.exception_scope_id === skuId
-    case 'family':     return ex.exception_scope_id === sku.family_id
-    case 'subfamily':  return ex.exception_scope_id === sku.subfamily_id
-    default:           return false
-  }
-}
 
 function buildConditionSummary(conditions: RuleCondition[]): string {
   if (conditions.length === 0) return '(always)'

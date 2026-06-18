@@ -14,8 +14,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <a href="/" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>Dashboard</a>
           <a href="/skus" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>SKUs</a>
           <a href="/boms" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>BOMs</a>
+          <a href="/cost-sets" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>Cost Sets</a>
           <a href="/validation" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>Validation</a>
           <a href="/inventory" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>Inventory</a>
+          <a href="/traces" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>Traces</a>
+          <a href="/audit" style={{ color: '#ccc', textDecoration: 'none', fontSize: '14px' }}>Audit</a>
         </nav>
         <main style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
           {children}

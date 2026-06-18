@@ -1,9 +1,12 @@
 export default function Dashboard() {
   const cards = [
-    { href: '/skus', label: 'SKU Management', description: 'Create, search and archive SKUs. Manage part numbers, families, make/buy status.' },
-    { href: '/boms', label: 'BOM Explorer', description: 'View and navigate bill-of-materials trees. Trigger cost calculation.' },
-    { href: '/validation', label: 'Validation Center', description: 'Run validation rules against BOMs, SKUs, cost sets and rules. See findings.' },
-    { href: '/inventory', label: 'Inventory Valuation', description: 'Create snapshots, upload lines, run valuation and review results by family/warehouse.' },
+    { href: '/skus',       label: 'SKU Management',     description: 'Create, search and archive SKUs. Manage part numbers, families, make/buy status.' },
+    { href: '/boms',       label: 'BOM Explorer',        description: 'View and navigate bill-of-materials trees. Trigger cost calculation with full breakdown.' },
+    { href: '/cost-sets',  label: 'Cost Sets',           description: 'Manage cost sets and cost items across sites and projects.' },
+    { href: '/validation', label: 'Validation Center',   description: 'Run 19 validation rules against BOMs, SKUs, cost sets, rules and inventory.' },
+    { href: '/inventory',  label: 'Inventory Valuation', description: 'Create snapshots, upload lines, run valuation and review results by family/warehouse.' },
+    { href: '/traces',     label: 'Trace Viewer',        description: 'Inspect any calculation trace. See full BOM breakdown, cost sources, and rules applied.' },
+    { href: '/audit',      label: 'Audit Log',           description: 'Browse the immutable audit trail of all create, update, approve, and delete events.' },
   ]
 
   return (
@@ -26,16 +29,19 @@ export default function Dashboard() {
         <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>API Endpoints</h3>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '12px', fontFamily: 'monospace', color: '#444' }}>
           {[
-            'GET /api/skus', 'POST /api/skus',
-            'GET /api/skus/[id]', 'PATCH /api/skus/[id]',
-            'GET /api/boms', 'POST /api/boms',
-            'GET /api/cost-sets', 'POST /api/cost-sets',
-            'GET /api/rules', 'POST /api/rules',
-            'GET /api/exceptions', 'POST /api/exceptions',
-            'GET /api/inventory', 'POST /api/inventory',
-            'POST /api/inventory/[id]/value', 'GET /api/inventory/[id]/lines',
-            'POST /api/validate', 'POST /api/calculate',
-            'GET /api/audit', 'POST /api/auth/webhook',
+            'GET /api/skus',             'POST /api/skus',
+            'GET /api/skus/[id]',        'PATCH /api/skus/[id]',
+            'GET /api/boms',             'POST /api/boms',
+            'GET /api/cost-sets',        'POST /api/cost-sets',
+            'GET /api/cost-sets/[id]/items', 'POST /api/cost-sets/[id]/items',
+            'GET /api/rules',            'POST /api/rules',
+            'GET /api/rules/[id]',       'PATCH /api/rules/[id]',
+            'GET /api/exceptions',       'POST /api/exceptions',
+            'GET /api/inventory',        'POST /api/inventory',
+            'PUT /api/inventory/[id]/lines', 'POST /api/inventory/[id]/value',
+            'POST /api/validate',        'POST /api/calculate',
+            'GET /api/traces/[id]',      'GET /api/traces/[id]/lines',
+            'GET /api/traces/[id]/rules','GET /api/audit',
           ].map(ep => <span key={ep} style={{ padding: '2px 0' }}>{ep}</span>)}
         </div>
       </div>
