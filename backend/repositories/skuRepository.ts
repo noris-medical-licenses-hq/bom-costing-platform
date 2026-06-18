@@ -33,6 +33,13 @@ export async function findSkuById(id: string, client: SupabaseServerClient): Pro
   return data
 }
 
+export async function findSkusByIds(ids: string[], client: SupabaseServerClient): Promise<Sku[]> {
+  if (ids.length === 0) return []
+  const { data, error } = await client.from('skus').select('*').in('id', ids)
+  if (error) handleSupabaseError(error, 'findSkusByIds', 'skus')
+  return data ?? []
+}
+
 export async function findSkuByPartNumber(partNumber: string, client: SupabaseServerClient): Promise<Sku | null> {
   const { data, error } = await client.from('skus').select('*').eq('part_number', partNumber).maybeSingle()
   if (error) handleSupabaseError(error, 'findSkuByPartNumber', 'skus')

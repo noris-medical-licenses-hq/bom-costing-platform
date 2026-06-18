@@ -93,6 +93,34 @@ export async function resolveCostItemForSku(
   return null
 }
 
+// Finds the most cost-effective current supplier price for a SKU (Level 6 fallback).
+// Prefers the SKU's default_supplier_id, then falls back to any active supplier's current price.
+export async function findBestSupplierPrice(
+  skuId: string,
+  defaultSupplierId: string | null,
+  valuationDate: string,
+  client: SupabaseServerClient
+): Promise<{ id: string; unit_price: number; currency: string; supplier_id: string } | null> {
+  let query = client.from('supplier_prices')
+    .select('id, unit_price, currency, supplier_id')
+    .eq('sku_id', skuId)
+    .lte('effective_from', valuationDate)
+    .or('effective_to.is.null,effective_to.gte.' + valuationDate)
+    .order('unit_price', { ascending: true })
+    .limit(10)
+
+  const { data, error } = await query
+  if (error) handleSupabaseError(error, 'findBestSupplierPrice', 'supplier_prices')
+  if (!data || data.length === 0) return null
+
+  // Prefer default supplier if available
+  if (defaultSupplierId) {
+    const preferred = data.find(p => p.supplier_id === defaultSupplierId)
+    if (preferred) return preferred
+  }
+  return data[0] ?? null
+}
+
 // ─── Manual Cost Adjustments ─────────────────────────────────────────────────
 
 export async function findActiveManualAdjustment(

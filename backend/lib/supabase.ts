@@ -1,11 +1,17 @@
 import { createServerClient } from '@supabase/ssr'
-import { createClient } from '@supabase/supabase-js'
+import type { CookieOptions } from '@supabase/ssr'
+import { createClient, SupabaseClient } from '@supabase/supabase-js'
 import { cookies } from 'next/headers'
 import type { Database } from '../types/database.generated'
 
 // Server client — uses the user's JWT from the cookie.
 // RLS applies. Use this in server actions and API routes.
-export async function createServerSupabaseClient() {
+//
+// NOTE: We cast to SupabaseClient<Database> because createServerClient's type
+// declaration from @supabase/ssr passes Database['public'] in the SchemaName
+// position of SupabaseClient (which expects a string), breaking all .from()
+// type inference. The cast is safe — the runtime client is fully functional.
+export async function createServerSupabaseClient(): Promise<SupabaseClient<Database>> {
   const cookieStore = await cookies()
   return createServerClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -13,14 +19,14 @@ export async function createServerSupabaseClient() {
     {
       cookies: {
         getAll() { return cookieStore.getAll() },
-        setAll(cookiesToSet) {
+        setAll(cookiesToSet: { name: string; value: string; options: CookieOptions }[]) {
           cookiesToSet.forEach(({ name, value, options }) =>
-            cookieStore.set(name, value, options)
+            cookieStore.set({ name, value, ...options })
           )
         },
       },
     }
-  )
+  ) as unknown as SupabaseClient<Database>
 }
 
 // Service-role client — bypasses RLS.

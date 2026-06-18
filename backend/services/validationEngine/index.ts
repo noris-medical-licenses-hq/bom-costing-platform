@@ -17,23 +17,31 @@ import { validateBomLinesReferenceActiveSkus } from './rules/bom/V-BOM-002'
 import { validateNoDuplicateBomLines } from './rules/bom/V-BOM-003'
 import { validateBomLineQuantities } from './rules/bom/V-BOM-004'
 import { validateNoBomCycle } from './rules/bom/V-BOM-005'
+import { validateNoBomLinesWithArchivedSkus } from './rules/bom/V-BOM-006'
+import { validateSubAssemblyMakeBuy } from './rules/bom/V-BOM-007'
+import { validateBomSkuSubfamilies } from './rules/sku/V-SKU-002'
+// Cost validators
+import { validateCostItemCurrencies } from './rules/cost/V-COST-001'
 
 export async function runValidationEngine(
   input: ValidationRunInput,
   client: SupabaseServerClient
 ): Promise<ValidationResult> {
   // Create the validation run record
+  const { data: { user } } = await client.auth.getUser()
+  const orgIdResult = await client.rpc('auth_org_id').maybeSingle()
+  const orgId: string = (orgIdResult.data as string | null) ?? ''
+
   const run = await createValidationRun({
-    organization_id: '', // TODO: get from auth_org_id() via RPC or from client context
+    organization_id: orgId,
     run_type: input.run_type,
     scope_type: input.scope_type,
-    scope_id: input.scope_id,
+    scope_id: input.scope_id ?? null,
     status: 'running',
     error_count: 0,
     warning_count: 0,
     info_count: 0,
-    triggered_by: null, // TODO: get from session
-    triggered_at: new Date().toISOString(),
+    triggered_by: user?.id ?? null,
     completed_at: null,
   }, client)
 
@@ -47,10 +55,10 @@ export async function runValidationEngine(
       allFindings.push(...bomFindings)
     }
 
-    // TODO: Add SKU, Cost, Rule, Inventory validators based on scope_type
-    // if (input.scope_type === 'sku') { ... }
-    // if (input.scope_type === 'cost_set') { ... }
-    // if (input.scope_type === 'inventory_snapshot') { ... }
+    if (input.scope_type === 'cost_set' && input.scope_id) {
+      const costFindings = await validateCostItemCurrencies(input.scope_id, client)
+      allFindings.push(...costFindings)
+    }
 
     // Persist findings
     if (allFindings.length > 0) {
@@ -90,6 +98,9 @@ async function runBomValidators(bomVersionId: string, client: SupabaseServerClie
     validateNoDuplicateBomLines,
     validateBomLineQuantities,
     validateNoBomCycle,
+    validateNoBomLinesWithArchivedSkus,
+    validateSubAssemblyMakeBuy,
+    validateBomSkuSubfamilies,
   ]
   for (const validator of validators) {
     findings.push(...await validator(bomVersionId, client))
