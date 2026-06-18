@@ -1,49 +1,120 @@
+'use client'
+
+import { useState, useEffect } from 'react'
+
+const D = {
+  red:       '#C62839',
+  dark:      '#222222',
+  secondary: '#666666',
+  bg:        '#F8F9FA',
+  card:      '#FFFFFF',
+  border:    '#E5E7EB',
+}
+
+interface KPIs {
+  skuCount:      number | null
+  bomCount:      number | null
+  costSetCount:  number | null
+  snapshotCount: number | null
+  lastImport:    string | null
+}
+
+const MODULE_CARDS = [
+  { href: '/boms',       label: 'BOM Explorer',        icon: '🔩', description: 'View and calculate BOMs. Full cost breakdown with trace.' },
+  { href: '/inventory',  label: 'Inventory Valuation', icon: '📦', description: 'Create snapshots, import counts, run valuation by warehouse.' },
+  { href: '/validation', label: 'Validation Center',   icon: '✅', description: '19 validation rules across BOMs, SKUs, costs and inventory.' },
+  { href: '/imports',    label: 'Import Center',        icon: '📥', description: 'Import SKUs, BOMs, costs and inventory from CSV or Excel.' },
+  { href: '/skus',       label: 'SKU Management',      icon: '🏷️', description: 'Create, search and manage part numbers and families.' },
+  { href: '/cost-sets',  label: 'Cost Sets',            icon: '💰', description: 'Manage material costs, rates and effective-date pricing.' },
+  { href: '/traces',     label: 'Trace Viewer',         icon: '🔍', description: 'Inspect any calculation. See BOM rollup, cost sources, rules.' },
+  { href: '/audit',      label: 'Audit Log',            icon: '📋', description: 'Immutable audit trail — 7-year EU MDR retention.' },
+]
+
 export default function Dashboard() {
-  const cards = [
-    { href: '/skus',       label: 'SKU Management',     description: 'Create, search and archive SKUs. Manage part numbers, families, make/buy status.' },
-    { href: '/boms',       label: 'BOM Explorer',        description: 'View and navigate bill-of-materials trees. Trigger cost calculation with full breakdown.' },
-    { href: '/cost-sets',  label: 'Cost Sets',           description: 'Manage cost sets and cost items across sites and projects.' },
-    { href: '/validation', label: 'Validation Center',   description: 'Run 19 validation rules against BOMs, SKUs, cost sets, rules and inventory.' },
-    { href: '/inventory',  label: 'Inventory Valuation', description: 'Create snapshots, upload lines, run valuation and review results by family/warehouse.' },
-    { href: '/traces',     label: 'Trace Viewer',        description: 'Inspect any calculation trace. See full BOM breakdown, cost sources, and rules applied.' },
-    { href: '/audit',      label: 'Audit Log',           description: 'Browse the immutable audit trail of all create, update, approve, and delete events.' },
+  const [kpis, setKpis] = useState<KPIs>({ skuCount: null, bomCount: null, costSetCount: null, snapshotCount: null, lastImport: null })
+
+  useEffect(() => {
+    async function loadKpis() {
+      const [skuRes, bomRes, csRes, invRes, impRes] = await Promise.allSettled([
+        fetch('/api/skus').then(r => r.json()),
+        fetch('/api/boms').then(r => r.json()),
+        fetch('/api/cost-sets').then(r => r.json()),
+        fetch('/api/inventory').then(r => r.json()),
+        fetch('/api/imports?limit=1').then(r => r.json()),
+      ])
+      setKpis({
+        skuCount:      skuRes.status  === 'fulfilled' ? (skuRes.value?.data?.length ?? 0)  : null,
+        bomCount:      bomRes.status  === 'fulfilled' ? (bomRes.value?.data?.length ?? 0)  : null,
+        costSetCount:  csRes.status   === 'fulfilled' ? (csRes.value?.data?.length  ?? 0)  : null,
+        snapshotCount: invRes.status  === 'fulfilled' ? (invRes.value?.data?.length  ?? 0) : null,
+        lastImport:    impRes.status  === 'fulfilled' ? (impRes.value?.data?.[0]?.created_at ?? null) : null,
+      })
+    }
+    loadKpis()
+  }, [])
+
+  const KPI_STATS = [
+    { label: 'SKUs',       value: kpis.skuCount,      href: '/skus',      },
+    { label: 'BOMs',       value: kpis.bomCount,      href: '/boms',      },
+    { label: 'Cost Sets',  value: kpis.costSetCount,  href: '/cost-sets', },
+    { label: 'Snapshots',  value: kpis.snapshotCount, href: '/inventory', },
   ]
 
   return (
     <div>
-      <h1 style={{ fontSize: '22px', fontWeight: 700, marginBottom: '8px' }}>BOM Costing Platform</h1>
-      <p style={{ color: '#555', marginBottom: '32px', fontSize: '14px' }}>Internal cost management system — Noris Medical</p>
+      {/* Page header */}
+      <div style={{ marginBottom: '28px' }}>
+        <h1 style={{ fontSize: '24px', fontWeight: 700, color: D.dark, marginBottom: '4px' }}>
+          BOM Costing Platform
+        </h1>
+        <p style={{ color: D.secondary, fontSize: '14px', margin: 0 }}>
+          Internal cost management system — Noris Medical
+        </p>
+      </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '16px' }}>
-        {cards.map(card => (
-          <a key={card.href} href={card.href} style={{ textDecoration: 'none', color: 'inherit' }}>
-            <div style={{ background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '20px', cursor: 'pointer' }}>
-              <h2 style={{ fontSize: '16px', fontWeight: 600, marginBottom: '8px', color: '#1a1a2e' }}>{card.label}</h2>
-              <p style={{ fontSize: '13px', color: '#666', margin: 0 }}>{card.description}</p>
+      {/* KPI row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '16px', marginBottom: '32px' }}>
+        {KPI_STATS.map(stat => (
+          <a key={stat.label} href={stat.href} style={{ textDecoration: 'none' }}>
+            <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '8px', padding: '20px', borderTop: `3px solid ${D.red}` }}>
+              <div style={{ fontSize: '28px', fontWeight: 700, color: D.dark, marginBottom: '4px' }}>
+                {stat.value === null ? <span style={{ color: D.border, fontSize: '20px' }}>—</span> : stat.value}
+              </div>
+              <div style={{ fontSize: '13px', color: D.secondary }}>{stat.label}</div>
             </div>
           </a>
         ))}
       </div>
 
-      <div style={{ marginTop: '40px', padding: '16px', background: '#fff', border: '1px solid #e0e0e0', borderRadius: '8px' }}>
-        <h3 style={{ fontSize: '14px', fontWeight: 600, marginBottom: '12px' }}>API Endpoints</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px', fontSize: '12px', fontFamily: 'monospace', color: '#444' }}>
-          {[
-            'GET /api/skus',             'POST /api/skus',
-            'GET /api/skus/[id]',        'PATCH /api/skus/[id]',
-            'GET /api/boms',             'POST /api/boms',
-            'GET /api/cost-sets',        'POST /api/cost-sets',
-            'GET /api/cost-sets/[id]/items', 'POST /api/cost-sets/[id]/items',
-            'GET /api/rules',            'POST /api/rules',
-            'GET /api/rules/[id]',       'PATCH /api/rules/[id]',
-            'GET /api/exceptions',       'POST /api/exceptions',
-            'GET /api/inventory',        'POST /api/inventory',
-            'PUT /api/inventory/[id]/lines', 'POST /api/inventory/[id]/value',
-            'POST /api/validate',        'POST /api/calculate',
-            'GET /api/traces/[id]',      'GET /api/traces/[id]/lines',
-            'GET /api/traces/[id]/rules','GET /api/audit',
-          ].map(ep => <span key={ep} style={{ padding: '2px 0' }}>{ep}</span>)}
+      {kpis.lastImport && (
+        <div style={{ marginBottom: '24px', fontSize: '12px', color: D.secondary }}>
+          Last import: {new Date(kpis.lastImport).toLocaleString()} ·{' '}
+          <a href="/imports" style={{ color: D.red }}>Import Center →</a>
         </div>
+      )}
+
+      {/* Module cards */}
+      <div style={{ marginBottom: '16px', fontSize: '13px', fontWeight: 600, color: D.secondary, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+        Modules
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: '14px' }}>
+        {MODULE_CARDS.map(card => (
+          <a key={card.href} href={card.href} style={{ textDecoration: 'none', color: 'inherit' }}>
+            <div style={{
+              background: D.card,
+              border: `1px solid ${D.border}`,
+              borderRadius: '8px',
+              padding: '18px 20px',
+              cursor: 'pointer',
+              height: '100%',
+              boxSizing: 'border-box',
+            }}>
+              <div style={{ fontSize: '22px', marginBottom: '8px' }}>{card.icon}</div>
+              <div style={{ fontSize: '14px', fontWeight: 600, color: D.dark, marginBottom: '6px' }}>{card.label}</div>
+              <div style={{ fontSize: '13px', color: D.secondary }}>{card.description}</div>
+            </div>
+          </a>
+        ))}
       </div>
     </div>
   )

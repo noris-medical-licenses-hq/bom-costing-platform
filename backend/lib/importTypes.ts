@@ -1,0 +1,89 @@
+export type ImportType =
+  | 'sku_master'
+  | 'bom_lines'
+  | 'costs'
+  | 'inventory_snapshot'
+  | 'supplier_prices'
+  | 'suppliers'
+  | 'sites'
+  | 'warehouses'
+  | 'cost_rules'
+  | 'rule_exceptions'
+  | 'virtual_components'
+
+export interface TargetField {
+  key: string
+  label: string
+  required: boolean
+  type: 'string' | 'number' | 'boolean' | 'date'
+  hint?: string
+}
+
+export const TARGET_FIELDS: Record<ImportType, TargetField[]> = {
+  sku_master: [
+    { key: 'sku',         label: 'SKU',         required: true,  type: 'string', hint: 'Unique part number / item code' },
+    { key: 'description', label: 'Description', required: true,  type: 'string' },
+    { key: 'family',      label: 'Family',      required: false, type: 'string' },
+    { key: 'subfamily',   label: 'Subfamily',   required: false, type: 'string' },
+    { key: 'uom',         label: 'UOM',         required: false, type: 'string', hint: 'Unit of measure (EA, KG, M…)' },
+    { key: 'active',      label: 'Active',      required: false, type: 'boolean' },
+  ],
+  bom_lines: [
+    { key: 'parent_sku',  label: 'Parent SKU',  required: true,  type: 'string' },
+    { key: 'child_sku',   label: 'Child SKU',   required: true,  type: 'string' },
+    { key: 'quantity',    label: 'Quantity',    required: true,  type: 'number' },
+    { key: 'bom_version', label: 'BOM Version', required: false, type: 'string' },
+    { key: 'notes',       label: 'Notes',       required: false, type: 'string' },
+  ],
+  costs: [
+    { key: 'sku',            label: 'SKU',            required: true,  type: 'string' },
+    { key: 'cost',           label: 'Cost',           required: true,  type: 'number' },
+    { key: 'cost_set',       label: 'Cost Set',       required: true,  type: 'string' },
+    { key: 'currency',       label: 'Currency',       required: false, type: 'string', hint: 'ISO 3-letter code, e.g. USD' },
+    { key: 'effective_date', label: 'Effective Date', required: false, type: 'date' },
+    { key: 'supplier',       label: 'Supplier',       required: false, type: 'string' },
+    { key: 'notes',          label: 'Notes',          required: false, type: 'string' },
+  ],
+  inventory_snapshot: [
+    { key: 'sku',           label: 'SKU',           required: true,  type: 'string' },
+    { key: 'quantity',      label: 'Quantity',      required: true,  type: 'number' },
+    { key: 'warehouse',     label: 'Warehouse',     required: false, type: 'string' },
+    { key: 'site',          label: 'Site',          required: false, type: 'string' },
+    { key: 'project',       label: 'Project',       required: false, type: 'string' },
+    { key: 'snapshot_date', label: 'Snapshot Date', required: false, type: 'date' },
+    { key: 'uom',           label: 'UOM',           required: false, type: 'string' },
+    { key: 'notes',         label: 'Notes',         required: false, type: 'string' },
+  ],
+  // Phase-2 types — structure defined, commit not yet implemented
+  supplier_prices:    [],
+  suppliers:          [],
+  sites:              [],
+  warehouses:         [],
+  cost_rules:         [],
+  rule_exceptions:    [],
+  virtual_components: [],
+}
+
+export const IMPORT_TYPE_LABELS: Record<ImportType, string> = {
+  sku_master:         'SKU Master',
+  bom_lines:          'BOM Lines',
+  costs:              'Costs',
+  inventory_snapshot: 'Inventory Snapshot',
+  supplier_prices:    'Supplier Prices',
+  suppliers:          'Suppliers',
+  sites:              'Sites',
+  warehouses:         'Warehouses',
+  cost_rules:         'Cost Rules',
+  rule_exceptions:    'Rule Exceptions',
+  virtual_components: 'Virtual Components',
+}
+
+export const MVP_IMPORT_TYPES: ImportType[] = [
+  'sku_master',
+  'bom_lines',
+  'costs',
+  'inventory_snapshot',
+]
+
+// BOM and Costs are all-or-nothing. Others allow partial commit.
+export const ALL_OR_NOTHING_TYPES: ImportType[] = ['bom_lines', 'costs']
