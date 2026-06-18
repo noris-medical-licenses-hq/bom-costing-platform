@@ -10,6 +10,10 @@ const Schema = z.object({
   templateName:  z.string().optional(),
 })
 
+// Max rows to load per page from import_job_rows.
+// PostgREST default is 1000; this override handles up to 100k rows safely.
+const PAGE_SIZE = 2000
+
 export async function POST(request: NextRequest) {
   try {
     const client = await createServerSupabaseClient()
@@ -32,29 +36,57 @@ export async function POST(request: NextRequest) {
     const svcDb = svc as any
 
     // Verify job belongs to this org
-    const { data: job } = await svcDb.from('import_jobs').select('*').eq('id', jobId).eq('organization_id', orgId).single()
+    const { data: job } = await svcDb.from('import_jobs')
+      .select('*')
+      .eq('id', jobId)
+      .eq('organization_id', orgId)
+      .single()
+
     if (!job) return NextResponse.json({ error: 'Import job not found' }, { status: 404 })
     if (job.status === 'committed') return NextResponse.json({ error: 'Import already committed' }, { status: 409 })
-
-    // Load rows
-    const { data: rowRecords } = await svcDb.from('import_job_rows')
-      .select('row_number, mapped_data, status, errors, warnings')
-      .eq('import_job_id', jobId)
-      .order('row_number')
-
-    if (!rowRecords?.length) {
-      return NextResponse.json({ error: 'No rows found for this import job' }, { status: 400 })
+    if (!['validated', 'validating'].includes(job.status)) {
+      return NextResponse.json({ error: `Job in status "${job.status}" cannot be committed` }, { status: 409 })
     }
 
-    const rows: RowValidationResult[] = (rowRecords as Array<{ row_number: number; status: string; errors: unknown; warnings: unknown; mapped_data: unknown }>).map(r => ({
-      rowNumber:  r.row_number,
-      status:     r.status as 'valid' | 'warning' | 'error',
-      errors:     (r.errors as string[] | null) ?? [],
-      warnings:   (r.warnings as string[] | null) ?? [],
-      mappedData: (r.mapped_data as Record<string, string | number | boolean | null>) ?? {},
-    }))
+    // ── Load all valid/warning rows using pagination ──────────────────────────
+    // This replaces the old single query that was silently capped at 1000 rows.
 
-    const commitResult = await commitImport(jobId, orgId, user.id, job.import_type as never, rows, svc)
+    const allRows: RowValidationResult[] = []
+    let offset = 0
+
+    while (true) {
+      const { data: page, error: pageErr } = await svcDb
+        .from('import_job_rows')
+        .select('row_number, mapped_data, status, errors, warnings')
+        .eq('import_job_id', jobId)
+        .in('status', ['valid', 'warning'])
+        .order('row_number')
+        .range(offset, offset + PAGE_SIZE - 1)
+
+      if (pageErr) {
+        return NextResponse.json({ error: `Failed to load rows: ${pageErr.message}` }, { status: 500 })
+      }
+      if (!page || page.length === 0) break
+
+      for (const r of page as Array<{ row_number: number; status: string; errors: unknown; warnings: unknown; mapped_data: unknown }>) {
+        allRows.push({
+          rowNumber:  r.row_number,
+          status:     r.status as 'valid' | 'warning' | 'error',
+          errors:     (r.errors as string[] | null) ?? [],
+          warnings:   (r.warnings as string[] | null) ?? [],
+          mappedData: (r.mapped_data as Record<string, string | number | boolean | null>) ?? {},
+        })
+      }
+
+      offset += PAGE_SIZE
+      if (page.length < PAGE_SIZE) break
+    }
+
+    if (allRows.length === 0) {
+      return NextResponse.json({ error: 'No valid rows found to commit' }, { status: 400 })
+    }
+
+    const commitResult = await commitImport(jobId, orgId, user.id, job.import_type as never, allRows, svc)
 
     // Update job status
     await svcDb.from('import_jobs').update({
@@ -103,13 +135,14 @@ export async function POST(request: NextRequest) {
         committed:       commitResult.committed,
         skipped:         commitResult.skipped,
         errors:          commitResult.errors.length,
+        total_rows_committed: allRows.length,
       },
     })
 
     return NextResponse.json({
-      committed:   commitResult.committed,
-      skipped:     commitResult.skipped,
-      errors:      commitResult.errors,
+      committed: commitResult.committed,
+      skipped:   commitResult.skipped,
+      errors:    commitResult.errors,
     })
   } catch (err) {
     console.error('Commit route error:', err)

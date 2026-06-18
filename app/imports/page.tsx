@@ -4,19 +4,21 @@ import { useState, useRef, useCallback } from 'react'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const D = {
-  red:       '#C62839',
-  dark:      '#222222',
-  secondary: '#666666',
-  bg:        '#F8F9FA',
-  card:      '#FFFFFF',
-  border:    '#E5E7EB',
-  success:   '#16a34a',
-  warning:   '#d97706',
-  error:     '#dc2626',
-  redLight:  '#FEF2F2',
-  greenLight:'#F0FDF4',
+  red:        '#C62839',
+  dark:       '#222222',
+  secondary:  '#666666',
+  bg:         '#F8F9FA',
+  card:       '#FFFFFF',
+  border:     '#E5E7EB',
+  success:    '#16a34a',
+  warning:    '#d97706',
+  error:      '#dc2626',
+  redLight:   '#FEF2F2',
+  greenLight: '#F0FDF4',
   yellowLight:'#FFFBEB',
 }
+
+const CHUNK_SIZE = 1000 // rows per upload chunk
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -64,6 +66,16 @@ interface CommitSummary {
   committed: number
   skipped: number
   errors: Array<{ row: number; error: string }>
+}
+
+interface UploadProgress {
+  totalRows: number
+  processedRows: number
+  validRows: number
+  warningRows: number
+  errorRows: number
+  sampleErrors: Array<{ row: number; errors: string[] }>
+  aborted: boolean
 }
 
 // ─── Import type definitions ──────────────────────────────────────────────────
@@ -137,6 +149,10 @@ async function parseFile(file: File): Promise<{ headers: string[]; rows: Record<
   return { headers, rows }
 }
 
+function fmtNum(n: number) {
+  return n.toLocaleString('en-US')
+}
+
 // ─── Sub-components ───────────────────────────────────────────────────────────
 
 function Stepper({ step }: { step: Step }) {
@@ -153,9 +169,7 @@ function Stepper({ step }: { step: Step }) {
       {steps.map((s, i) => (
         <div key={s.key} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
           <div style={{
-            padding: '4px 14px',
-            borderRadius: '20px',
-            fontSize: '13px',
+            padding: '4px 14px', borderRadius: '20px', fontSize: '13px',
             fontWeight: i <= idx ? 600 : 400,
             background: i < idx ? D.success : i === idx ? D.red : D.border,
             color:      i <= idx ? '#fff' : D.secondary,
@@ -177,6 +191,41 @@ function Card({ children, style }: { children: React.ReactNode; style?: React.CS
   )
 }
 
+function ProgressBar({ progress }: { progress: UploadProgress }) {
+  const pct = progress.totalRows > 0 ? Math.round((progress.processedRows / progress.totalRows) * 100) : 0
+  return (
+    <div>
+      {/* Bar */}
+      <div style={{ background: D.border, borderRadius: '99px', height: '10px', overflow: 'hidden', marginBottom: '12px' }}>
+        <div style={{
+          height: '100%', borderRadius: '99px',
+          background: progress.errorRows > 0 ? D.error : D.red,
+          width: `${pct}%`,
+          transition: 'width 0.3s ease',
+        }} />
+      </div>
+      {/* Stats row */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '12px', marginBottom: '16px' }}>
+        {[
+          { label: 'Total',     value: fmtNum(progress.totalRows),     color: D.dark    },
+          { label: 'Processed', value: fmtNum(progress.processedRows), color: D.dark    },
+          { label: 'Valid',     value: fmtNum(progress.validRows),     color: D.success },
+          { label: 'Warnings',  value: fmtNum(progress.warningRows),   color: D.warning },
+          { label: 'Errors',    value: fmtNum(progress.errorRows),     color: progress.errorRows > 0 ? D.error : D.secondary },
+        ].map(s => (
+          <div key={s.label} style={{ background: D.bg, borderRadius: '6px', padding: '10px', textAlign: 'center' }}>
+            <div style={{ fontSize: '20px', fontWeight: 700, color: s.color }}>{s.value}</div>
+            <div style={{ fontSize: '11px', color: D.secondary }}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+      <div style={{ fontSize: '13px', color: D.secondary, textAlign: 'center' }}>
+        {pct}% — chunk {Math.ceil(progress.processedRows / CHUNK_SIZE)} of {Math.ceil(progress.totalRows / CHUNK_SIZE)} · {fmtNum(progress.processedRows)} of {fmtNum(progress.totalRows)} rows
+      </div>
+    </div>
+  )
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ImportsPage() {
@@ -190,14 +239,16 @@ export default function ImportsPage() {
   const [templates,      setTemplates]      = useState<Template[]>([])
   const [parsing,        setParsing]        = useState(false)
   const [loadingSuggest, setLoadingSuggest] = useState(false)
-  const [validating,     setValidating]     = useState(false)
+  const [uploading,      setUploading]      = useState(false)
+  const [progress,       setProgress]       = useState<UploadProgress | null>(null)
   const [committing,     setCommitting]     = useState(false)
   const [validation,     setValidation]     = useState<ValidationSummary | null>(null)
   const [commitResult,   setCommitResult]   = useState<CommitSummary | null>(null)
   const [saveTemplate,   setSaveTemplate]   = useState(false)
   const [templateName,   setTemplateName]   = useState('')
   const [error,          setError]          = useState<string | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const fileInputRef  = useRef<HTMLInputElement>(null)
+  const abortRef      = useRef(false)
 
   // Step 1 → Select type
   function selectType(def: ImportTypeDef) {
@@ -206,7 +257,7 @@ export default function ImportsPage() {
     setError(null)
   }
 
-  // Step 2 → Upload & parse file
+  // Step 2 → Upload & parse file (no row limit — chunked upload handles scale)
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     if (!file || !importTypeDef) return
@@ -215,12 +266,10 @@ export default function ImportsPage() {
     try {
       const { headers: h, rows: r } = await parseFile(file)
       if (!h.length) { setError('File appears to be empty or has no headers.'); setParsing(false); return }
-      if (r.length > 10_000) { setError('File exceeds 10,000 rows. Please split and import in batches.'); setParsing(false); return }
       setFileName(file.name)
       setHeaders(h)
       setRows(r)
 
-      // Fetch suggestions from server
       setLoadingSuggest(true)
       const res = await fetch('/api/imports/preview', {
         method: 'POST',
@@ -232,14 +281,11 @@ export default function ImportsPage() {
       setSuggestions(sugg)
       setTemplates(data.templates ?? [])
 
-      // Auto-apply suggestions
       const m: Record<string, string> = {}
-      for (const s of sugg) {
-        m[s.sourceColumn] = s.suggestedField ?? IGNORE
-      }
+      for (const s of sugg) m[s.sourceColumn] = s.suggestedField ?? IGNORE
       setMapping(m)
       setStep('mapping')
-    } catch (err) {
+    } catch {
       setError('Failed to parse file. Check the file format and try again.')
     } finally {
       setParsing(false)
@@ -250,9 +296,7 @@ export default function ImportsPage() {
   function applyTemplate(tmpl: Template) {
     const m: Record<string, string> = { ...mapping }
     for (const entry of tmpl.import_template_mappings) {
-      if (headers.includes(entry.source_column)) {
-        m[entry.source_column] = entry.target_field
-      }
+      if (headers.includes(entry.source_column)) m[entry.source_column] = entry.target_field
     }
     setMapping(m)
   }
@@ -261,27 +305,82 @@ export default function ImportsPage() {
     setMapping(prev => ({ ...prev, [srcCol]: tgtField }))
   }
 
-  // Step 3 → Validate
-  async function handleValidate() {
-    if (!importTypeDef) return
-    setValidating(true)
+  // Step 3 → Chunked upload & validation
+  const handleChunkedUpload = useCallback(async () => {
+    if (!importTypeDef || !rows.length) return
+    setUploading(true)
     setError(null)
+    abortRef.current = false
+
+    const prog: UploadProgress = {
+      totalRows: rows.length, processedRows: 0,
+      validRows: 0, warningRows: 0, errorRows: 0, sampleErrors: [], aborted: false,
+    }
+    setProgress({ ...prog })
+
     try {
-      const res = await fetch('/api/imports/validate', {
+      // Create the import job
+      const startRes = await fetch('/api/imports/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ importType: importTypeDef.type, fileName, rows, mapping }),
+        body: JSON.stringify({ importType: importTypeDef.type, fileName, mapping, totalRows: rows.length }),
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Validation failed'); setValidating(false); return }
-      setValidation(data)
-      setStep('validation')
-    } catch {
-      setError('Validation request failed. Please try again.')
+      const startData = await startRes.json()
+      if (!startRes.ok) { setError(startData.error ?? 'Failed to create import job'); setUploading(false); return }
+      const jobId: string = startData.jobId
+
+      // Send rows in chunks
+      const totalChunks = Math.ceil(rows.length / CHUNK_SIZE)
+
+      for (let chunkIdx = 0; chunkIdx < totalChunks; chunkIdx++) {
+        if (abortRef.current) {
+          prog.aborted = true
+          setProgress({ ...prog })
+          break
+        }
+
+        const start = chunkIdx * CHUNK_SIZE
+        const chunk = rows.slice(start, start + CHUNK_SIZE)
+
+        const chunkRes = await fetch(`/api/imports/${jobId}/chunk`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rows: chunk, rowOffset: start }),
+        })
+        const chunkData = await chunkRes.json()
+
+        if (!chunkRes.ok) {
+          setError(chunkData.error ?? `Chunk ${chunkIdx + 1} failed`)
+          setUploading(false)
+          return
+        }
+
+        prog.processedRows = chunkData.totalProcessed
+        prog.validRows     = chunkData.totalValid
+        prog.warningRows   = chunkData.totalWarnings
+        prog.errorRows     = chunkData.totalErrors
+        prog.sampleErrors  = [...prog.sampleErrors, ...(chunkData.sampleErrors ?? [])].slice(0, 20)
+        setProgress({ ...prog })
+      }
+
+      if (!prog.aborted) {
+        setValidation({
+          jobId,
+          totalRows:   prog.totalRows,
+          validRows:   prog.validRows,
+          warningRows: prog.warningRows,
+          errorRows:   prog.errorRows,
+          sampleErrors: prog.sampleErrors,
+        })
+        setStep('validation')
+      }
+    } catch (err) {
+      setError('Upload failed. Please try again.')
+      console.error(err)
     } finally {
-      setValidating(false)
+      setUploading(false)
     }
-  }
+  }, [importTypeDef, rows, fileName, mapping])
 
   // Step 4 → Commit
   async function handleCommit() {
@@ -320,20 +419,22 @@ export default function ImportsPage() {
     setTemplates([])
     setValidation(null)
     setCommitResult(null)
+    setProgress(null)
     setSaveTemplate(false)
     setTemplateName('')
     setError(null)
+    abortRef.current = false
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
 
-  // ─── Render ────────────────────────────────────────────────────────────────
+  // ─── Render ──────────────────────────────────────────────────────────────────
 
   return (
     <div>
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, marginBottom: '4px' }}>Import Center</h1>
         <p style={{ color: D.secondary, fontSize: '14px', margin: 0 }}>
-          Import SKUs, BOMs, costs and inventory from CSV or Excel files. Maps are saved as reusable templates.
+          Import SKUs, BOMs, costs and inventory from CSV or Excel files. Processes up to 100,000+ rows via chunked upload.
         </p>
       </div>
 
@@ -353,8 +454,7 @@ export default function ImportsPage() {
             {IMPORT_TYPES.map(def => (
               <button key={def.type} onClick={() => selectType(def)} style={{
                 background: D.card, border: `1px solid ${D.border}`, borderRadius: '8px',
-                padding: '20px', cursor: 'pointer', textAlign: 'left',
-                transition: 'border-color 0.15s',
+                padding: '20px', cursor: 'pointer', textAlign: 'left', transition: 'border-color 0.15s',
               }}
               onMouseEnter={e => (e.currentTarget.style.borderColor = D.red)}
               onMouseLeave={e => (e.currentTarget.style.borderColor = D.border)}>
@@ -362,21 +462,15 @@ export default function ImportsPage() {
                 <div style={{ fontSize: '13px', color: D.secondary, marginBottom: '12px' }}>{def.description}</div>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
                   {def.fields.filter(f => f.required).map(f => (
-                    <span key={f.key} style={{ fontSize: '11px', background: '#FEF2F2', color: D.red, border: `1px solid #FECACA`, borderRadius: '3px', padding: '1px 6px' }}>
-                      {f.label}
-                    </span>
+                    <span key={f.key} style={{ fontSize: '11px', background: '#FEF2F2', color: D.red, border: `1px solid #FECACA`, borderRadius: '3px', padding: '1px 6px' }}>{f.label}</span>
                   ))}
                   {def.fields.filter(f => !f.required).map(f => (
-                    <span key={f.key} style={{ fontSize: '11px', background: '#F9FAFB', color: D.secondary, border: `1px solid ${D.border}`, borderRadius: '3px', padding: '1px 6px' }}>
-                      {f.label}
-                    </span>
+                    <span key={f.key} style={{ fontSize: '11px', background: '#F9FAFB', color: D.secondary, border: `1px solid ${D.border}`, borderRadius: '3px', padding: '1px 6px' }}>{f.label}</span>
                   ))}
                 </div>
               </button>
             ))}
           </div>
-
-          {/* History */}
           <div style={{ marginTop: '40px' }}>
             <ImportHistory />
           </div>
@@ -390,14 +484,13 @@ export default function ImportsPage() {
             Upload file — {importTypeDef.label}
           </div>
           <div style={{ fontSize: '13px', color: D.secondary, marginBottom: '24px' }}>
-            Supported formats: .csv, .xlsx — max 10,000 rows per file.
+            Supported formats: .csv, .xlsx · No row limit — large files are uploaded in chunks of {fmtNum(CHUNK_SIZE)} rows.
           </div>
 
           <div style={{
             border: `2px dashed ${D.border}`, borderRadius: '8px', padding: '40px',
             textAlign: 'center', cursor: 'pointer', background: D.bg,
-          }}
-          onClick={() => fileInputRef.current?.click()}>
+          }} onClick={() => fileInputRef.current?.click()}>
             <div style={{ fontSize: '32px', marginBottom: '12px' }}>📁</div>
             <div style={{ fontSize: '15px', fontWeight: 600, color: D.dark, marginBottom: '4px' }}>
               {parsing ? 'Parsing file…' : 'Click to select file'}
@@ -405,13 +498,7 @@ export default function ImportsPage() {
             <div style={{ fontSize: '13px', color: D.secondary }}>CSV or Excel (.xlsx)</div>
           </div>
 
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".csv,.xlsx,.xls"
-            style={{ display: 'none' }}
-            onChange={handleFileChange}
-          />
+          <input ref={fileInputRef} type="file" accept=".csv,.xlsx,.xls" style={{ display: 'none' }} onChange={handleFileChange} />
 
           <div style={{ marginTop: '16px', padding: '12px', background: D.bg, borderRadius: '6px', fontSize: '13px', color: D.secondary }}>
             <strong>Expected fields for {importTypeDef.label}:</strong>{' '}
@@ -432,16 +519,13 @@ export default function ImportsPage() {
           <div style={{ display: 'flex', gap: '16px', marginBottom: '20px', alignItems: 'flex-start' }}>
             <div style={{ flex: 1 }}>
               <div style={{ fontSize: '15px', fontWeight: 600, color: D.dark }}>Map columns — {fileName}</div>
-              <div style={{ fontSize: '13px', color: D.secondary }}>{rows.length} rows · {headers.length} columns detected</div>
+              <div style={{ fontSize: '13px', color: D.secondary }}>{fmtNum(rows.length)} rows · {headers.length} columns detected</div>
             </div>
             {templates.length > 0 && (
               <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                 <span style={{ fontSize: '13px', color: D.secondary, alignSelf: 'center' }}>Apply template:</span>
                 {templates.map(t => (
-                  <button key={t.id} onClick={() => applyTemplate(t)} style={{
-                    fontSize: '13px', padding: '4px 12px', border: `1px solid ${D.border}`,
-                    borderRadius: '4px', cursor: 'pointer', background: D.card, color: D.dark,
-                  }}>
+                  <button key={t.id} onClick={() => applyTemplate(t)} style={{ fontSize: '13px', padding: '4px 12px', border: `1px solid ${D.border}`, borderRadius: '4px', cursor: 'pointer', background: D.card, color: D.dark }}>
                     {t.name}
                   </button>
                 ))}
@@ -461,28 +545,18 @@ export default function ImportsPage() {
               </thead>
               <tbody>
                 {headers.map((col, i) => {
-                  const sugg = suggestions.find(s => s.sourceColumn === col)
+                  const sugg    = suggestions.find(s => s.sourceColumn === col)
                   const current = mapping[col] ?? IGNORE
-                  const tgtDef = importTypeDef.fields.find(f => f.key === current)
+                  const tgtDef  = importTypeDef.fields.find(f => f.key === current)
                   const example = rows[0]?.[col] ?? ''
                   return (
                     <tr key={col} style={{ borderBottom: `1px solid ${D.border}`, background: i % 2 === 0 ? D.card : D.bg }}>
                       <td style={{ padding: '10px 16px', fontSize: '13px', fontFamily: 'monospace', color: D.dark }}>{col}</td>
                       <td style={{ padding: '10px 16px' }}>
-                        <select
-                          value={current}
-                          onChange={e => updateMapping(col, e.target.value)}
-                          style={{
-                            width: '100%', fontSize: '13px', padding: '4px 8px',
-                            border: `1px solid ${current === IGNORE ? D.border : D.red}`,
-                            borderRadius: '4px', background: D.card, color: D.dark,
-                          }}
-                        >
+                        <select value={current} onChange={e => updateMapping(col, e.target.value)} style={{ width: '100%', fontSize: '13px', padding: '4px 8px', border: `1px solid ${current === IGNORE ? D.border : D.red}`, borderRadius: '4px', background: D.card, color: D.dark }}>
                           <option value={IGNORE}>— Ignore this column —</option>
                           {importTypeDef.fields.map(f => (
-                            <option key={f.key} value={f.key}>
-                              {f.label}{f.required ? ' *' : ''}
-                            </option>
+                            <option key={f.key} value={f.key}>{f.label}{f.required ? ' *' : ''}</option>
                           ))}
                         </select>
                         {sugg?.suggestedField && sugg.method !== 'none' && (
@@ -504,14 +578,29 @@ export default function ImportsPage() {
             </table>
           </Card>
 
-          <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
-            <button onClick={() => setStep('upload')} style={{ fontSize: '14px', padding: '8px 20px', border: `1px solid ${D.border}`, borderRadius: '6px', cursor: 'pointer', background: D.card, color: D.dark }}>
-              ← Back
-            </button>
-            <button onClick={handleValidate} disabled={validating} style={{ fontSize: '14px', padding: '8px 24px', background: D.red, color: '#fff', border: 'none', borderRadius: '6px', cursor: validating ? 'not-allowed' : 'pointer', fontWeight: 600, opacity: validating ? 0.7 : 1 }}>
-              {validating ? 'Validating…' : 'Validate →'}
-            </button>
-          </div>
+          {/* Upload progress (shown while uploading) */}
+          {uploading && progress && (
+            <Card style={{ marginTop: '20px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                <div style={{ fontSize: '15px', fontWeight: 600, color: D.dark }}>Uploading &amp; validating…</div>
+                <button onClick={() => { abortRef.current = true }} style={{ fontSize: '12px', color: D.secondary, background: 'none', border: `1px solid ${D.border}`, padding: '4px 12px', borderRadius: '4px', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+              <ProgressBar progress={progress} />
+            </Card>
+          )}
+
+          {!uploading && (
+            <div style={{ display: 'flex', gap: '12px', marginTop: '20px' }}>
+              <button onClick={() => setStep('upload')} style={{ fontSize: '14px', padding: '8px 20px', border: `1px solid ${D.border}`, borderRadius: '6px', cursor: 'pointer', background: D.card, color: D.dark }}>
+                ← Back
+              </button>
+              <button onClick={handleChunkedUpload} style={{ fontSize: '14px', padding: '8px 24px', background: D.red, color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
+                Upload &amp; Validate {fmtNum(rows.length)} rows →
+              </button>
+            </div>
+          )}
         </div>
       )}
 
@@ -520,13 +609,12 @@ export default function ImportsPage() {
         <div>
           <div style={{ fontSize: '15px', fontWeight: 600, color: D.dark, marginBottom: '20px' }}>Validation results</div>
 
-          {/* Summary cards */}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px', marginBottom: '24px' }}>
             {[
-              { label: 'Total rows',    value: validation.totalRows,   color: D.dark    },
-              { label: 'Valid',         value: validation.validRows,   color: D.success },
-              { label: 'Warnings',      value: validation.warningRows, color: D.warning },
-              { label: 'Errors',        value: validation.errorRows,   color: D.error   },
+              { label: 'Total rows', value: fmtNum(validation.totalRows),   color: D.dark    },
+              { label: 'Valid',      value: fmtNum(validation.validRows),   color: D.success },
+              { label: 'Warnings',   value: fmtNum(validation.warningRows), color: D.warning },
+              { label: 'Errors',     value: fmtNum(validation.errorRows),   color: D.error   },
             ].map(stat => (
               <Card key={stat.label} style={{ padding: '16px', textAlign: 'center' }}>
                 <div style={{ fontSize: '28px', fontWeight: 700, color: stat.color }}>{stat.value}</div>
@@ -538,7 +626,7 @@ export default function ImportsPage() {
           {validation.errorRows > 0 && (
             <Card style={{ marginBottom: '20px', borderColor: '#FECACA', background: D.redLight }}>
               <div style={{ fontWeight: 600, color: D.error, marginBottom: '12px', fontSize: '14px' }}>
-                {validation.errorRows} error{validation.errorRows !== 1 ? 's' : ''} found — sample:
+                {fmtNum(validation.errorRows)} error{validation.errorRows !== 1 ? 's' : ''} found — sample (first 20):
               </div>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
                 <thead>
@@ -561,11 +649,10 @@ export default function ImportsPage() {
 
           {importTypeDef.allOrNothing && validation.errorRows > 0 && (
             <div style={{ padding: '12px 16px', background: '#FFFBEB', border: `1px solid #FDE68A`, borderRadius: '6px', fontSize: '14px', color: '#92400E', marginBottom: '20px' }}>
-              ⚠ {importTypeDef.label} uses all-or-nothing commit. Fix all {validation.errorRows} error{validation.errorRows !== 1 ? 's' : ''} before committing.
+              ⚠ {importTypeDef.label} uses all-or-nothing commit. Fix all {fmtNum(validation.errorRows)} error{validation.errorRows !== 1 ? 's' : ''} before committing.
             </div>
           )}
 
-          {/* Save template */}
           <Card style={{ marginBottom: '20px' }}>
             <div style={{ fontWeight: 600, fontSize: '14px', color: D.dark, marginBottom: '12px' }}>Save mapping as template</div>
             <label style={{ display: 'flex', gap: '8px', alignItems: 'center', cursor: 'pointer', fontSize: '14px', color: D.dark }}>
@@ -573,13 +660,8 @@ export default function ImportsPage() {
               Save this column mapping for future imports
             </label>
             {saveTemplate && (
-              <input
-                type="text"
-                value={templateName}
-                onChange={e => setTemplateName(e.target.value)}
-                placeholder="Template name, e.g. Noris SKU Format"
-                style={{ marginTop: '10px', width: '100%', padding: '8px', border: `1px solid ${D.border}`, borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }}
-              />
+              <input type="text" value={templateName} onChange={e => setTemplateName(e.target.value)} placeholder="Template name, e.g. Noris SKU Format"
+                style={{ marginTop: '10px', width: '100%', padding: '8px', border: `1px solid ${D.border}`, borderRadius: '4px', fontSize: '14px', boxSizing: 'border-box' }} />
             )}
           </Card>
 
@@ -597,7 +679,7 @@ export default function ImportsPage() {
                 opacity: (committing || (importTypeDef.allOrNothing && validation.errorRows > 0)) ? 0.5 : 1,
               }}
             >
-              {committing ? 'Committing…' : `Commit ${validation.validRows + validation.warningRows} rows →`}
+              {committing ? 'Committing…' : `Commit ${fmtNum(validation.validRows + validation.warningRows)} rows →`}
             </button>
           </div>
         </div>
@@ -606,24 +688,20 @@ export default function ImportsPage() {
       {/* ── Step: Done ────────────────────────────────────────────────────── */}
       {step === 'done' && commitResult && (
         <Card style={{ textAlign: 'center', padding: '48px' }}>
-          <div style={{ fontSize: '48px', marginBottom: '16px' }}>
-            {commitResult.errors.length === 0 ? '✅' : '⚠️'}
-          </div>
-          <div style={{ fontSize: '22px', fontWeight: 700, color: D.dark, marginBottom: '8px' }}>
-            Import complete
-          </div>
+          <div style={{ fontSize: '48px', marginBottom: '16px' }}>{commitResult.errors.length === 0 ? '✅' : '⚠️'}</div>
+          <div style={{ fontSize: '22px', fontWeight: 700, color: D.dark, marginBottom: '8px' }}>Import complete</div>
           <div style={{ display: 'flex', gap: '24px', justifyContent: 'center', marginBottom: '24px' }}>
             <div>
-              <div style={{ fontSize: '28px', fontWeight: 700, color: D.success }}>{commitResult.committed}</div>
+              <div style={{ fontSize: '28px', fontWeight: 700, color: D.success }}>{fmtNum(commitResult.committed)}</div>
               <div style={{ fontSize: '13px', color: D.secondary }}>Committed</div>
             </div>
             <div>
-              <div style={{ fontSize: '28px', fontWeight: 700, color: D.secondary }}>{commitResult.skipped}</div>
+              <div style={{ fontSize: '28px', fontWeight: 700, color: D.secondary }}>{fmtNum(commitResult.skipped)}</div>
               <div style={{ fontSize: '13px', color: D.secondary }}>Skipped</div>
             </div>
             {commitResult.errors.length > 0 && (
               <div>
-                <div style={{ fontSize: '28px', fontWeight: 700, color: D.error }}>{commitResult.errors.length}</div>
+                <div style={{ fontSize: '28px', fontWeight: 700, color: D.error }}>{fmtNum(commitResult.errors.length)}</div>
                 <div style={{ fontSize: '13px', color: D.secondary }}>Errors</div>
               </div>
             )}
@@ -633,7 +711,7 @@ export default function ImportsPage() {
               {commitResult.errors.slice(0, 5).map((e, i) => (
                 <div key={i} style={{ fontSize: '13px', color: D.error }}>Row #{e.row}: {e.error}</div>
               ))}
-              {commitResult.errors.length > 5 && <div style={{ fontSize: '12px', color: D.secondary, marginTop: '4px' }}>…and {commitResult.errors.length - 5} more. See Audit Log for full details.</div>}
+              {commitResult.errors.length > 5 && <div style={{ fontSize: '12px', color: D.secondary, marginTop: '4px' }}>…and {fmtNum(commitResult.errors.length - 5)} more. See Audit Log for full details.</div>}
             </div>
           )}
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
@@ -655,8 +733,8 @@ export default function ImportsPage() {
 function ImportHistory() {
   const [jobs, setJobs] = useState<Array<{
     id: string; import_type: string; file_name: string | null;
-    status: string; total_rows: number; valid_rows: number;
-    error_rows: number; created_at: string;
+    status: string; total_rows: number; processed_rows: number;
+    valid_rows: number; error_rows: number; created_at: string;
   }> | null>(null)
   const [loading, setLoading] = useState(false)
   const [loaded, setLoaded] = useState(false)
@@ -679,8 +757,8 @@ function ImportHistory() {
     costs: 'Costs', inventory_snapshot: 'Inventory',
   }
   const STATUS_COLORS: Record<string, string> = {
-    committed: D.success, validated: D.warning, failed: D.error,
-    pending: D.secondary, cancelled: D.secondary,
+    committed: D.success, validated: D.warning, uploading: '#1565c0',
+    failed: D.error, pending: D.secondary, cancelled: D.secondary,
   }
 
   return (
@@ -699,7 +777,7 @@ function ImportHistory() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: D.bg, borderBottom: `1px solid ${D.border}` }}>
-                  {['Type', 'File', 'Status', 'Rows', 'Valid', 'Errors', 'Date'].map(h => (
+                  {['Type', 'File', 'Status', 'Total', 'Processed', 'Valid', 'Errors', 'Date'].map(h => (
                     <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 600, color: D.secondary }}>{h}</th>
                   ))}
                 </tr>
@@ -710,9 +788,10 @@ function ImportHistory() {
                     <td style={{ padding: '8px 14px', fontSize: '13px', color: D.dark }}>{TYPE_LABELS[j.import_type] ?? j.import_type}</td>
                     <td style={{ padding: '8px 14px', fontSize: '12px', color: D.secondary, fontFamily: 'monospace' }}>{j.file_name ?? '—'}</td>
                     <td style={{ padding: '8px 14px', fontSize: '12px', color: STATUS_COLORS[j.status] ?? D.secondary, fontWeight: 600, textTransform: 'capitalize' }}>{j.status}</td>
-                    <td style={{ padding: '8px 14px', fontSize: '13px', color: D.dark }}>{j.total_rows}</td>
-                    <td style={{ padding: '8px 14px', fontSize: '13px', color: D.success }}>{j.valid_rows}</td>
-                    <td style={{ padding: '8px 14px', fontSize: '13px', color: j.error_rows > 0 ? D.error : D.secondary }}>{j.error_rows}</td>
+                    <td style={{ padding: '8px 14px', fontSize: '13px', color: D.dark }}>{fmtNum(j.total_rows)}</td>
+                    <td style={{ padding: '8px 14px', fontSize: '13px', color: D.secondary }}>{fmtNum(j.processed_rows)}</td>
+                    <td style={{ padding: '8px 14px', fontSize: '13px', color: D.success }}>{fmtNum(j.valid_rows)}</td>
+                    <td style={{ padding: '8px 14px', fontSize: '13px', color: j.error_rows > 0 ? D.error : D.secondary }}>{fmtNum(j.error_rows)}</td>
                     <td style={{ padding: '8px 14px', fontSize: '12px', color: D.secondary }}>{new Date(j.created_at).toLocaleDateString()}</td>
                   </tr>
                 ))}

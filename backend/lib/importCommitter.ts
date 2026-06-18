@@ -9,6 +9,10 @@ export interface CommitResult {
   errors: Array<{ row: number; error: string }>
 }
 
+// Rows are processed in batches for all DB writes. This keeps individual
+// API calls small and avoids memory spikes for large imports.
+const DB_BATCH = 200
+
 export async function commitImport(
   jobId: string,
   orgId: string,
@@ -68,32 +72,41 @@ async function commitSkuMaster(
     subfamilyMap.set(sf.code.toLowerCase(), sf.id)
   }
 
-  for (const row of rows) {
-    const d = row.mappedData
-    const partNumber = String(d['sku'] ?? '').trim()
-    const name       = String(d['description'] ?? '').trim()
-    const famName    = d['family']    ? String(d['family']).toLowerCase().trim()    : null
-    const subName    = d['subfamily'] ? String(d['subfamily']).toLowerCase().trim() : null
-    const uom        = d['uom']       ? String(d['uom']).trim()                     : 'EA'
-
-    const { error } = await db.from('skus').upsert({
+  // Build all upsert records first, then bulk-upsert in batches
+  const records = rows.map(row => {
+    const d        = row.mappedData
+    const famName  = d['family']    ? String(d['family']).toLowerCase().trim()    : null
+    const subName  = d['subfamily'] ? String(d['subfamily']).toLowerCase().trim() : null
+    return {
       organization_id: orgId,
-      part_number:     partNumber,
-      name,
-      description:     null,
+      part_number:     String(d['sku'] ?? '').trim(),
+      name:            String(d['description'] ?? '').trim(),
+      description:     null as string | null,
       item_type:       'purchased_part',
       make_buy:        'buy',
-      unit_of_measure: uom,
+      unit_of_measure: d['uom'] ? String(d['uom']).trim() : 'EA',
       family_id:       famName ? (familyMap.get(famName) ?? null) : null,
       subfamily_id:    subName ? (subfamilyMap.get(subName) ?? null) : null,
       status:          'active',
       is_regulated:    false,
       created_by:      userId,
       updated_by:      userId,
-    }, { onConflict: 'organization_id,part_number', ignoreDuplicates: false })
+      _rowNumber:      row.rowNumber,
+    }
+  })
 
-    if (error) result.errors.push({ row: row.rowNumber, error: error.message })
-    else result.committed++
+  for (let i = 0; i < records.length; i += DB_BATCH) {
+    const batch = records.slice(i, i + DB_BATCH)
+    const upsertRows = batch.map(({ _rowNumber: _r, ...r }) => r)
+    const { error } = await db.from('skus').upsert(
+      upsertRows,
+      { onConflict: 'organization_id,part_number', ignoreDuplicates: false }
+    )
+    if (error) {
+      for (const r of batch) result.errors.push({ row: r._rowNumber, error: error.message })
+    } else {
+      result.committed += batch.length
+    }
   }
 }
 
@@ -150,9 +163,9 @@ async function commitBomLines(
     if (!bom) {
       const { data: newBom, error: bomErr } = await db.from('boms').insert({
         organization_id: orgId,
-        sku_id: parentId,
-        created_by: userId,
-        updated_by: userId,
+        sku_id:          parentId,
+        created_by:      userId,
+        updated_by:      userId,
       }).select('id').single()
       if (bomErr || !newBom) {
         for (const r of parentRows) result.errors.push({ row: r.rowNumber, error: `Failed to create BOM: ${bomErr?.message}` })
@@ -168,16 +181,14 @@ async function commitBomLines(
       .limit(1)
       .maybeSingle()
 
-    const nextVersionNumber = (maxVer?.version_number ?? 0) + 1
-
     const { data: version, error: verErr } = await db.from('bom_versions').insert({
-      organization_id:  orgId,
-      bom_id:           bom.id,
-      version_number:   nextVersionNumber,
-      status:           'draft',
-      effective_from:   new Date().toISOString().slice(0, 10),
-      created_by:       userId,
-      updated_by:       userId,
+      organization_id: orgId,
+      bom_id:          bom.id,
+      version_number:  (maxVer?.version_number ?? 0) + 1,
+      status:          'draft',
+      effective_from:  new Date().toISOString().slice(0, 10),
+      created_by:      userId,
+      updated_by:      userId,
     }).select('id').single()
 
     if (verErr || !version) {
@@ -185,6 +196,8 @@ async function commitBomLines(
       continue
     }
 
+    // Bulk insert all lines for this parent
+    const lineRecords = []
     for (const r of parentRows) {
       const childSku = String(r.mappedData['child_sku'] ?? '').trim()
       const childId  = skuMap.get(childSku)
@@ -193,8 +206,7 @@ async function commitBomLines(
         result.skipped++
         continue
       }
-
-      const { error } = await db.from('bom_lines').insert({
+      lineRecords.push({
         organization_id: orgId,
         bom_version_id:  version.id,
         line_type:       'sku',
@@ -203,10 +215,19 @@ async function commitBomLines(
         unit_of_measure: 'EA',
         created_by:      userId,
         updated_by:      userId,
+        _rowNumber:      r.rowNumber,
       })
+    }
 
-      if (error) result.errors.push({ row: r.rowNumber, error: error.message })
-      else result.committed++
+    for (let i = 0; i < lineRecords.length; i += DB_BATCH) {
+      const batch = lineRecords.slice(i, i + DB_BATCH)
+      const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
+      const { error } = await db.from('bom_lines').insert(insertBatch)
+      if (error) {
+        for (const r of batch) result.errors.push({ row: r._rowNumber, error: error.message })
+      } else {
+        result.committed += batch.length
+      }
     }
   }
 }
@@ -221,8 +242,8 @@ async function commitCosts(
   client: SupabaseServiceClient
 ): Promise<void> {
   const db = client as any
-  const skuNums     = [...new Set(rows.map(r => String(r.mappedData['sku'] ?? '').trim()))]
-  const csNames     = [...new Set(rows.map(r => String(r.mappedData['cost_set'] ?? '').trim()))]
+  const skuNums = [...new Set(rows.map(r => String(r.mappedData['sku'] ?? '').trim()))]
+  const csNames = [...new Set(rows.map(r => String(r.mappedData['cost_set'] ?? '').trim()))]
 
   const { data: skuRows } = await db.from('skus').select('id, part_number').eq('organization_id', orgId).in('part_number', skuNums)
   const { data: csRows  } = await db.from('cost_sets').select('id, name').eq('organization_id', orgId).in('name', csNames)
@@ -231,6 +252,9 @@ async function commitCosts(
   for (const s of skuRows ?? []) skuMap.set(s.part_number, s.id)
   const csMap = new Map<string, string>()
   for (const cs of csRows ?? []) csMap.set(cs.name, cs.id)
+
+  // Resolve all rows to insert records, collecting errors for unknowns
+  const toInsert: Array<Record<string, unknown> & { _rowNumber: number }> = []
 
   for (const r of rows) {
     const skuNum = String(r.mappedData['sku'] ?? '').trim()
@@ -241,14 +265,14 @@ async function commitCosts(
     if (!skuId) { result.errors.push({ row: r.rowNumber, error: `SKU "${skuNum}" not found` }); result.skipped++; continue }
     if (!csId)  { result.errors.push({ row: r.rowNumber, error: `Cost set "${csName}" not found` }); result.skipped++; continue }
 
-    const rawCcy = r.mappedData['currency'] ? String(r.mappedData['currency']).toUpperCase().trim() : null
-    const ccy    = rawCcy && /^[A-Z]{3}$/.test(rawCcy) ? rawCcy : 'USD'
-    const effRaw = r.mappedData['effective_date'] ? String(r.mappedData['effective_date']) : null
+    const rawCcy  = r.mappedData['currency'] ? String(r.mappedData['currency']).toUpperCase().trim() : null
+    const ccy     = rawCcy && /^[A-Z]{3}$/.test(rawCcy) ? rawCcy : 'USD'
+    const effRaw  = r.mappedData['effective_date'] ? String(r.mappedData['effective_date']) : null
     const effDate = effRaw && !isNaN(Date.parse(effRaw))
       ? new Date(effRaw).toISOString().slice(0, 10)
       : new Date().toISOString().slice(0, 10)
 
-    const { error } = await db.from('cost_items').insert({
+    toInsert.push({
       organization_id: orgId,
       cost_set_id:     csId,
       item_type:       'material_price',
@@ -263,10 +287,19 @@ async function commitCosts(
       is_active:       true,
       created_by:      userId,
       updated_by:      userId,
+      _rowNumber:      r.rowNumber,
     })
+  }
 
-    if (error) result.errors.push({ row: r.rowNumber, error: error.message })
-    else result.committed++
+  for (let i = 0; i < toInsert.length; i += DB_BATCH) {
+    const batch = toInsert.slice(i, i + DB_BATCH)
+    const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
+    const { error } = await db.from('cost_items').insert(insertBatch)
+    if (error) {
+      for (const r of batch) result.errors.push({ row: r._rowNumber as number, error: error.message })
+    } else {
+      result.committed += batch.length
+    }
   }
 }
 
@@ -293,15 +326,15 @@ async function commitInventory(
   }
 
   const { data: snapshot, error: snapErr } = await db.from('inventory_snapshots').insert({
-    organization_id:  orgId,
-    snapshot_name:    `Import ${new Date().toISOString().slice(0, 10)}`,
-    snapshot_date:    new Date().toISOString().slice(0, 10),
-    snapshot_type:    'full',
-    cost_set_id:      costSet.id,
-    base_currency:    costSet.base_currency ?? 'USD',
-    status:           'draft',
-    created_by:       userId,
-    updated_by:       userId,
+    organization_id: orgId,
+    snapshot_name:   `Import ${new Date().toISOString().slice(0, 10)}`,
+    snapshot_date:   new Date().toISOString().slice(0, 10),
+    snapshot_type:   'full',
+    cost_set_id:     costSet.id,
+    base_currency:   costSet.base_currency ?? 'USD',
+    status:          'draft',
+    created_by:      userId,
+    updated_by:      userId,
   }).select('id').single()
 
   if (snapErr || !snapshot) {
@@ -309,6 +342,7 @@ async function commitInventory(
     return
   }
 
+  // Load SKU and warehouse lookups
   const skuNums = [...new Set(rows.map(r => String(r.mappedData['sku'] ?? '').trim()))]
   const { data: skuRows } = await db.from('skus').select('id, part_number').eq('organization_id', orgId).in('part_number', skuNums)
   const skuMap = new Map<string, string>()
@@ -322,6 +356,9 @@ async function commitInventory(
   }
   const defaultWarehouseId = whRows?.[0]?.id ?? null
 
+  // Build all line records, then bulk insert
+  const toInsert: Array<Record<string, unknown> & { _rowNumber: number }> = []
+
   for (const r of rows) {
     const skuNum = String(r.mappedData['sku'] ?? '').trim()
     const skuId  = skuMap.get(skuNum)
@@ -331,16 +368,15 @@ async function commitInventory(
       continue
     }
 
-    const whRaw = r.mappedData['warehouse'] ? String(r.mappedData['warehouse']).toLowerCase().trim() : null
+    const whRaw       = r.mappedData['warehouse'] ? String(r.mappedData['warehouse']).toLowerCase().trim() : null
     const warehouseId = (whRaw ? whMap.get(whRaw) : null) ?? defaultWarehouseId
-
     if (!warehouseId) {
       result.errors.push({ row: r.rowNumber, error: 'No warehouse found. Create at least one warehouse first.' })
       result.skipped++
       continue
     }
 
-    const { error } = await db.from('inventory_lines').insert({
+    toInsert.push({
       organization_id: orgId,
       snapshot_id:     snapshot.id,
       sku_id:          skuId,
@@ -349,9 +385,18 @@ async function commitInventory(
       currency:        costSet.base_currency ?? 'USD',
       created_by:      userId,
       updated_by:      userId,
+      _rowNumber:      r.rowNumber,
     })
+  }
 
-    if (error) result.errors.push({ row: r.rowNumber, error: error.message })
-    else result.committed++
+  for (let i = 0; i < toInsert.length; i += DB_BATCH) {
+    const batch = toInsert.slice(i, i + DB_BATCH)
+    const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
+    const { error } = await db.from('inventory_lines').insert(insertBatch)
+    if (error) {
+      for (const r of batch) result.errors.push({ row: r._rowNumber as number, error: error.message })
+    } else {
+      result.committed += batch.length
+    }
   }
 }
