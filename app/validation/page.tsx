@@ -75,7 +75,7 @@ export default function ValidationPage() {
             <input type="text" placeholder="Leave blank for org-wide..." value={scopeId} onChange={e => setScopeId(e.target.value)} style={{ width: '100%', padding: '8px', border: '1px solid #ccc', borderRadius: '4px', fontSize: '13px', fontFamily: 'monospace', boxSizing: 'border-box' }} />
           </div>
         </div>
-        <button onClick={runValidation} disabled={loading} style={{ background: '#1a1a2e', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+        <button onClick={runValidation} disabled={loading} style={{ background: '#C62839', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}>
           {loading ? 'Running...' : 'Run Validation'}
         </button>
       </div>

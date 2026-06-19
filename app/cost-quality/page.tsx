@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { GuidancePanel } from '../components/GuidancePanel'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -70,6 +71,7 @@ export default function CostQualityPage() {
 
   return (
     <div>
+      <GuidancePanel moduleKey="cost-quality" />
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div>

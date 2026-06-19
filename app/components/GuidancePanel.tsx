@@ -101,6 +101,18 @@ const MODULES: Record<string, {
     outputs: ['Manufacturing cost structure used in MFG_COST_ROLLUP cost builds'],
     nextAction: 'After creating elements: run a Cost Build with the MFG_COST_ROLLUP strategy to apply them.',
   },
+  'cost-quality': {
+    title: 'Cost Quality',
+    purpose: 'Identify SKUs that resolved to zero cost in recent cost builds. These are silent valuation gaps — the SKU exists in inventory but carries no cost, causing undervaluation.',
+    whenToUse: [
+      'Before running an inventory valuation to ensure all SKUs are priced',
+      'After running a cost build to check the zero-cost count',
+      'When a previous valuation showed unexpectedly low total value',
+    ],
+    inputs: ['Lookback window (30 / 90 / 180 / 365 days)', 'Optional family filter'],
+    outputs: ['List of zero-cost SKUs with the strategies that failed and suggested fixes'],
+    nextAction: 'For each zero-cost SKU: follow the fix link (import price list, check BOM, or add cost element), then re-run the cost build.',
+  },
 }
 
 // ─── Business Playbooks ───────────────────────────────────────────────────────

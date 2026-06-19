@@ -86,7 +86,7 @@ export default function SkuPage() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h1 style={{ fontSize: '20px', fontWeight: 700 }}>SKU Management</h1>
-        <button onClick={() => setShowForm(!showForm)} style={{ background: '#1a1a2e', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer' }}>
+        <button onClick={() => setShowForm(!showForm)} style={{ background: '#C62839', color: '#fff', border: 'none', padding: '8px 16px', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>
           {showForm ? 'Cancel' : '+ New SKU'}
         </button>
       </div>
@@ -126,7 +126,7 @@ export default function SkuPage() {
               </select>
             </div>
           </div>
-          <button type="submit" disabled={submitting} style={{ marginTop: '16px', background: '#1a1a2e', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+          <button type="submit" disabled={submitting} style={{ marginTop: '16px', background: submitting ? '#666' : '#C62839', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: submitting ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}>
             {submitting ? 'Creating...' : 'Create SKU'}
           </button>
         </form>

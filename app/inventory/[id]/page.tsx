@@ -70,7 +70,7 @@ export default function SnapshotDetailPage({ params }: { params: { id: string } 
       fetch(`/api/inventory/${snapshotId}`),
       fetch(`/api/inventory/${snapshotId}/lines?limit=200`),
       fetch(`/api/valuation-reports?snapshotId=${snapshotId}`),
-      fetch('/api/cost-builds?status=complete'),
+      fetch('/api/cost-builds'),
     ])
     const [snapJson, linesJson, reportsJson, buildsJson] = await Promise.all([
       snapRes.json(), linesRes.json(), reportsRes.json(), buildsRes.json(),
@@ -80,7 +80,11 @@ export default function SnapshotDetailPage({ params }: { params: { id: string } 
     setSnap(snapJson.data)
     setLines(linesJson.data ?? [])
     setReports(reportsJson.data ?? [])
-    setCostBuilds(buildsJson.data ?? [])
+    // Only show builds that have a frozen cost set (complete, approved, or locked)
+    const usable = (buildsJson.data ?? []).filter((b: any) =>
+      ['complete', 'approved', 'locked'].includes(b.status)
+    )
+    setCostBuilds(usable)
   }, [snapshotId])
 
   useEffect(() => { load() }, [load])
@@ -243,7 +247,7 @@ export default function SnapshotDetailPage({ params }: { params: { id: string } 
                 <div style={{ marginBottom: '10px' }}>
                   <label style={{ fontSize: '11px', fontWeight: 600, color: D.secondary, display: 'block', marginBottom: '3px' }}>Cost Build *</label>
                   <select value={valBuildId} onChange={e => setValBuildId(e.target.value)} required style={{ width: '100%', padding: '6px 8px', border: `1px solid ${D.border}`, borderRadius: '4px', fontSize: '12px', background: D.card }}>
-                    <option value="">— select a completed Cost Build —</option>
+                    <option value="">— select an approved or completed Cost Build —</option>
                     {costBuilds.map(b => (
                       <option key={b.id} value={b.id}>
                         {b.sites?.name ?? '?'} / {b.name} [{b.cost_sets?.name ?? 'no cost set'}]
@@ -252,7 +256,7 @@ export default function SnapshotDetailPage({ params }: { params: { id: string } 
                   </select>
                   {costBuilds.length === 0 && (
                     <div style={{ fontSize: '11px', color: D.warning, marginTop: '4px' }}>
-                      No completed Cost Builds found. <a href="/cost-builds" style={{ color: D.red }}>Create one →</a>
+                      No approved Cost Builds found for any site. <a href="/cost-builds" style={{ color: D.red }}>Create and approve one →</a>
                     </div>
                   )}
                 </div>

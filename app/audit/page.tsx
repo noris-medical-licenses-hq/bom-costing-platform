@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 type AuditEvent = {
   id: string
@@ -32,6 +32,9 @@ export default function AuditPage() {
   const [eventType, setEventType] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [expanded, setExpanded] = useState<string | null>(null)
+
+  // Auto-load recent events on mount
+  useEffect(() => { load(true) }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load(reset = false) {
     const p = reset ? 0 : page
@@ -74,7 +77,7 @@ export default function AuditPage() {
             ))}
           </select>
         </div>
-        <button onClick={() => load(true)} disabled={loading} style={{ background: '#1a1a2e', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>
+        <button onClick={() => load(true)} disabled={loading} style={{ background: '#C62839', color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: loading ? 'not-allowed' : 'pointer', fontSize: '13px', fontWeight: 600 }}>
           {loading ? 'Loading...' : 'Search'}
         </button>
         {page > 0 && (
@@ -87,7 +90,7 @@ export default function AuditPage() {
 
       {!loaded ? (
         <div style={{ background: '#f8f8f8', border: '1px dashed #ccc', borderRadius: '8px', padding: '40px', textAlign: 'center', color: '#888', fontSize: '14px' }}>
-          Use filters above and click Search to load audit events
+          Loading audit events…
         </div>
       ) : events.length === 0 ? (
         <div style={{ background: '#f8f8f8', border: '1px solid #e0e0e0', borderRadius: '8px', padding: '40px', textAlign: 'center', color: '#888', fontSize: '14px' }}>
