@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { GuidancePanel } from '../components/GuidancePanel'
 import { useRole } from '../hooks/useRole'
 
 const D = {
@@ -229,6 +230,7 @@ export default function BomPage() {
 
   return (
     <div style={{ maxWidth: '1100px' }}>
+      <GuidancePanel moduleKey="boms" />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, margin: 0 }}>BOM Management</h1>

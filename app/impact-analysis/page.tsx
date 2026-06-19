@@ -12,6 +12,7 @@
  * Export: every section links to /api/impact-analysis/export (BG-020 framework)
  */
 import { useState, useCallback } from 'react'
+import { GuidancePanel } from '../components/GuidancePanel'
 import type { ImpactResult, CostChange, BomImpactRow, InventoryImpactRow, MfgImpactRow, ImpactSeverity } from '@/backend/lib/impactAnalysis'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
@@ -523,6 +524,7 @@ export default function ImpactAnalysisPage() {
 
   return (
     <div>
+      <GuidancePanel moduleKey="impact-analysis" />
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>

@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { GuidancePanel } from '../components/GuidancePanel'
 
 const D = {
   dark: '#222222', secondary: '#666666', bg: '#F8F9FA', card: '#FFFFFF',
@@ -204,6 +205,7 @@ export default function DataQualityPage() {
 
   return (
     <div>
+      <GuidancePanel moduleKey="data-quality" />
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div>

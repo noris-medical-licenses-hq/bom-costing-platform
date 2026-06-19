@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { GuidancePanel } from '../components/GuidancePanel'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -214,6 +215,7 @@ export default function MfgStructuresPage() {
 
   return (
     <div style={{ maxWidth: '1100px', margin: '0 auto', padding: '32px 24px', fontFamily: 'system-ui,sans-serif', color: D.dark }}>
+      <GuidancePanel moduleKey="mfg-structures" />
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '24px' }}>
         <div>
@@ -228,6 +230,13 @@ export default function MfgStructuresPage() {
             <input type="checkbox" checked={activeOnly} onChange={e => setActiveOnly(e.target.checked)} />
             Active only
           </label>
+          <a
+            href="/api/mfg-structures/export-issues"
+            download
+            style={{ background: '#F8F9FA', color: D.secondary, border: `1px solid ${D.border}`, borderRadius: '7px', padding: '9px 16px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+          >
+            Export Issues .xlsx
+          </a>
           <button onClick={() => { setShowCreate(true); setSaveError(null) }} style={{ background: D.red, color: '#fff', border: 'none', borderRadius: '7px', padding: '9px 20px', fontSize: '13px', fontWeight: 700, cursor: 'pointer' }}>
             + New Structure
           </button>

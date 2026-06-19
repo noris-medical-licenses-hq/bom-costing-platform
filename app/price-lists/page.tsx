@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { GuidancePanel } from '../components/GuidancePanel'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -225,6 +226,7 @@ export default function PriceListsPage() {
 
   return (
     <div style={{ maxWidth: '1100px' }}>
+      <GuidancePanel moduleKey="price-lists" />
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, margin: 0 }}>Price List Center</h1>

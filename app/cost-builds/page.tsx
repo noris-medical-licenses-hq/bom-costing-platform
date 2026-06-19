@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { GuidancePanel } from '../components/GuidancePanel'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -173,6 +174,7 @@ export default function CostBuildsPage() {
 
   return (
     <div>
+      <GuidancePanel moduleKey="cost-builds" />
       {/* Header */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>

@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from 'react'
 import type { FieldDef } from '@/app/api/import-fields/route'
+import { GuidancePanel } from '../components/GuidancePanel'
 
 // ─── Design tokens ────────────────────────────────────────────────────────────
 const D = {
@@ -715,6 +716,7 @@ export default function ImportsPage() {
         />
       )}
 
+      <GuidancePanel moduleKey="imports" />
       <div style={{ marginBottom: '24px' }}>
         <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, marginBottom: '4px' }}>Import Center</h1>
         <p style={{ color: D.secondary, fontSize: '14px', margin: 0 }}>

@@ -149,11 +149,20 @@ export default function SnapshotDetailPage({ params }: { params: { id: string } 
               <span>Status: <strong style={{ color: SNAP_STATUS_COLOR[snap.status] ?? D.secondary }}>{snap.status}</strong></span>
             </div>
           </div>
-          {snap.cost_sets && (
-            <div style={{ fontSize: '12px', background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '6px', padding: '6px 12px', color: D.blue }}>
-              Cost Set: <strong>{snap.cost_sets.name}</strong>
-            </div>
-          )}
+          <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+            {snap.cost_sets && (
+              <div style={{ fontSize: '12px', background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '6px', padding: '6px 12px', color: D.blue }}>
+                Cost Set: <strong>{snap.cost_sets.name}</strong>
+              </div>
+            )}
+            <a
+              href={`/api/inventory/${snapshotId}/export-issues`}
+              download
+              style={{ fontSize: '12px', color: '#666666', background: '#F8F9FA', border: '1px solid #E5E7EB', borderRadius: '6px', padding: '6px 12px', textDecoration: 'none', whiteSpace: 'nowrap' }}
+            >
+              Export Issues .xlsx
+            </a>
+          </div>
         </div>
       </div>
 
