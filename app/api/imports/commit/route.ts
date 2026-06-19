@@ -63,7 +63,7 @@ export async function POST(request: NextRequest) {
     while (true) {
       const { data: page, error: pageErr } = await svcDb
         .from('import_job_rows')
-        .select('row_number, mapped_data, status, errors, warnings')
+        .select('id, row_number, mapped_data, status, errors, warnings')
         .eq('import_job_id', jobId)
         .in('status', ['valid', 'warning'])
         .order('row_number')
@@ -74,9 +74,10 @@ export async function POST(request: NextRequest) {
       }
       if (!page || page.length === 0) break
 
-      for (const r of page as Array<{ row_number: number; status: string; errors: unknown; warnings: unknown; mapped_data: unknown }>) {
+      for (const r of page as Array<{ id: string; row_number: number; status: string; errors: unknown; warnings: unknown; mapped_data: unknown }>) {
         allRows.push({
           rowNumber:  r.row_number,
+          rowId:      r.id,
           status:     r.status as 'valid' | 'warning' | 'error',
           errors:     (r.errors as string[] | null) ?? [],
           warnings:   (r.warnings as string[] | null) ?? [],

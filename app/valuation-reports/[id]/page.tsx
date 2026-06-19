@@ -56,15 +56,27 @@ type Report = {
   linesTotalPages: number
 }
 
+type SummaryRow = {
+  group: string; sku_count: number; line_count: number
+  total_quantity: number; total_value: number; missing_cost_count: number; pct_of_total: number
+}
+type SummaryData = {
+  summary: SummaryRow[]; group_by: string; total_value: number | null; currency: string; line_count: number | null; missing_cost_count: number | null
+}
+
 export default function ValuationReportDetailPage() {
   const params = useParams()
   const id = params.id as string
-  const [report, setReport]       = useState<Report | null>(null)
-  const [loading, setLoading]     = useState(true)
+  const [report, setReport]             = useState<Report | null>(null)
+  const [loading, setLoading]           = useState(true)
   const [linesLoading, setLinesLoading] = useState(false)
-  const [linesPage, setLinesPage] = useState(1)
-  const [error, setError]         = useState<string | null>(null)
+  const [linesPage, setLinesPage]       = useState(1)
+  const [error, setError]               = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+  const [activeTab, setActiveTab]       = useState<'lines' | 'summary'>('lines')
+  const [summaryGroup, setSummaryGroup] = useState<'family' | 'item_type' | 'item_cost_type'>('family')
+  const [summaryData, setSummaryData]   = useState<SummaryData | null>(null)
+  const [summaryLoading, setSummaryLoading] = useState(false)
 
   const loadLines = useCallback(async (page: number) => {
     if (!report) return
@@ -91,6 +103,14 @@ export default function ValuationReportDetailPage() {
     setLoading(false)
     if (res.ok) { setReport(json.data); setLinesPage(1) }
     else setError(json.error)
+  }, [id])
+
+  const loadSummary = useCallback(async (group: string) => {
+    setSummaryLoading(true)
+    const res  = await fetch(`/api/valuation-reports/${id}/summary?groupBy=${group}`)
+    const json = await res.json()
+    setSummaryLoading(false)
+    if (res.ok) setSummaryData(json.data)
   }, [id])
 
   useEffect(() => { load() }, [load])
@@ -247,73 +267,163 @@ export default function ValuationReportDetailPage() {
         </div>
       </div>
 
-      {/* Lines Table */}
+      {/* Tabbed section: Summary + Lines */}
       <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '8px', overflow: 'hidden' }}>
-        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
-          <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0, color: D.dark }}>
-            Line Items
-            <span style={{ fontWeight: 400, color: D.secondary, marginLeft: '6px', fontSize: '13px' }}>
-              ({(report.linesTotal ?? report.line_count ?? 0).toLocaleString()} total
-              {(report.linesTotalPages ?? 1) > 1 && ` · page ${linesPage} of ${report.linesTotalPages}`})
-            </span>
-          </h3>
-          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-            {(report.missing_cost_count ?? 0) > 0 && (
-              <span style={{ fontSize: '12px', color: D.red, background: '#fef2f2', border: `1px solid #fecaca`, padding: '4px 10px', borderRadius: '12px' }}>
-                {report.missing_cost_count} missing costs
-              </span>
-            )}
-            {(report.linesTotalPages ?? 1) > 1 && (
-              <>
+
+        {/* Tab bar */}
+        <div style={{ display: 'flex', borderBottom: `1px solid ${D.border}`, background: D.bg }}>
+          {(['lines', 'summary'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => {
+                setActiveTab(tab)
+                if (tab === 'summary' && !summaryData) loadSummary(summaryGroup)
+              }}
+              style={{
+                padding: '11px 20px', fontSize: '13px', fontWeight: 600,
+                border: 'none', borderBottom: activeTab === tab ? `2px solid ${D.red}` : '2px solid transparent',
+                background: 'transparent', cursor: 'pointer',
+                color: activeTab === tab ? D.red : D.secondary,
+              }}
+            >
+              {tab === 'lines' ? `Line Items (${(report.linesTotal ?? report.line_count ?? 0).toLocaleString()})` : 'Value Summary'}
+            </button>
+          ))}
+        </div>
+
+        {/* Summary tab */}
+        {activeTab === 'summary' && (
+          <div>
+            <div style={{ padding: '12px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ fontSize: '12px', color: D.secondary, fontWeight: 600 }}>GROUP BY:</span>
+              {([
+                { value: 'family',        label: 'Product Family' },
+                { value: 'item_type',     label: 'Item Type' },
+                { value: 'item_cost_type',label: 'Cost Type' },
+              ] as const).map(opt => (
                 <button
-                  onClick={() => loadLines(linesPage - 1)}
-                  disabled={linesPage <= 1 || linesLoading}
-                  style={{ padding: '4px 10px', fontSize: '12px', border: `1px solid ${D.border}`, borderRadius: '5px', background: D.bg, cursor: 'pointer', opacity: linesPage <= 1 ? 0.5 : 1 }}
-                >← Prev</button>
-                <button
-                  onClick={() => loadLines(linesPage + 1)}
-                  disabled={linesPage >= (report.linesTotalPages ?? 1) || linesLoading}
-                  style={{ padding: '4px 10px', fontSize: '12px', border: `1px solid ${D.border}`, borderRadius: '5px', background: D.bg, cursor: 'pointer', opacity: linesPage >= (report.linesTotalPages ?? 1) ? 0.5 : 1 }}
-                >Next →</button>
-              </>
+                  key={opt.value}
+                  onClick={() => { setSummaryGroup(opt.value); loadSummary(opt.value) }}
+                  style={{
+                    padding: '4px 12px', fontSize: '12px', borderRadius: '20px',
+                    border: `1px solid ${summaryGroup === opt.value ? D.red : D.border}`,
+                    background: summaryGroup === opt.value ? '#FEF2F2' : D.card,
+                    color: summaryGroup === opt.value ? D.red : D.secondary,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              ))}
+              {summaryLoading && <span style={{ fontSize: '12px', color: D.secondary }}>Loading…</span>}
+            </div>
+            {summaryData && !summaryLoading && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                  <thead>
+                    <tr style={{ background: D.bg, borderBottom: `1px solid ${D.border}` }}>
+                      {['Group', 'SKUs', 'Lines', 'Total Qty', `Total Value (${ccy})`, '% of Total', 'Missing'].map(h => (
+                        <th key={h} style={{ padding: '10px 14px', textAlign: h === 'Group' ? 'left' : 'right', fontWeight: 600, color: D.secondary, whiteSpace: 'nowrap', fontSize: '11px' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {summaryData.summary.map((row, i) => (
+                      <tr key={row.group} style={{ borderBottom: `1px solid ${D.border}`, background: i % 2 === 0 ? D.card : D.bg }}>
+                        <td style={{ padding: '10px 14px', fontWeight: 600, color: D.dark }}>{row.group || '—'}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', color: D.secondary }}>{row.sku_count.toLocaleString()}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', color: D.secondary }}>{row.line_count.toLocaleString()}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'monospace' }}>{fmtNum(row.total_quantity, 0)}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 600, color: D.dark }}>{fmtNum(row.total_value)}</td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'flex-end' }}>
+                            <div style={{ width: '60px', height: '6px', background: D.border, borderRadius: '3px', overflow: 'hidden' }}>
+                              <div style={{ width: `${Math.min(100, row.pct_of_total)}%`, height: '100%', background: D.red, borderRadius: '3px' }} />
+                            </div>
+                            <span style={{ fontFamily: 'monospace', minWidth: '40px', textAlign: 'right' }}>{row.pct_of_total.toFixed(1)}%</span>
+                          </div>
+                        </td>
+                        <td style={{ padding: '10px 14px', textAlign: 'right', color: row.missing_cost_count > 0 ? D.red : D.secondary }}>{row.missing_cost_count > 0 ? row.missing_cost_count : '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: D.bg, borderTop: `2px solid ${D.border}` }}>
+                      <td style={{ padding: '10px 14px', fontWeight: 700, color: D.dark }}>Total</td>
+                      <td colSpan={3} />
+                      <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700, color: D.dark }}>{fmtNum(Number(summaryData.total_value ?? 0))}</td>
+                      <td style={{ padding: '10px 14px', textAlign: 'right', fontFamily: 'monospace', fontWeight: 700 }}>100.0%</td>
+                      <td style={{ padding: '10px 14px', textAlign: 'right', color: (summaryData.missing_cost_count ?? 0) > 0 ? D.red : D.secondary, fontWeight: 600 }}>{summaryData.missing_cost_count ?? 0}</td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
             )}
           </div>
-        </div>
-        {linesLoading && (
-          <div style={{ padding: '12px 20px', borderBottom: `1px solid ${D.border}`, fontSize: '12px', color: D.secondary }}>Loading lines…</div>
         )}
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
-            <thead>
-              <tr style={{ background: D.bg, borderBottom: `1px solid ${D.border}` }}>
-                {['Part #', 'Description', 'Warehouse', 'Qty', 'Source Ccy', 'Unit Cost (Src)', 'FX Rate', `Unit Cost (${ccy})`, `Line Total (${ccy})`, 'Cost Source', ''].map(h => (
-                  <th key={h} style={{ padding: '10px 12px', textAlign: h === '' || h.includes('Cost') || h.includes('Total') || h === 'Qty' || h === 'FX Rate' ? 'right' : 'left', fontWeight: 600, color: D.secondary, whiteSpace: 'nowrap' }}>{h}</th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {report.lines.length === 0 ? (
-                <tr><td colSpan={11} style={{ padding: '20px', textAlign: 'center', color: D.secondary }}>No lines</td></tr>
-              ) : report.lines.map(line => (
-                <tr key={line.id} style={{ borderBottom: `1px solid ${D.border}`, background: line.has_missing_cost ? '#fff8f8' : undefined }}>
-                  <td style={{ padding: '9px 12px', fontFamily: 'monospace', fontWeight: 600, color: D.dark }}>{line.skus?.part_number}</td>
-                  <td style={{ padding: '9px 12px', color: D.dark, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line.skus?.name}</td>
-                  <td style={{ padding: '9px 12px', color: D.secondary }}>{line.warehouses?.name ?? line.warehouses?.code ?? '—'}</td>
-                  <td style={{ padding: '9px 12px', textAlign: 'right' }}>{fmtNum(line.quantity, 0)}</td>
-                  <td style={{ padding: '9px 12px', textAlign: 'right', color: D.secondary }}>{line.source_currency}</td>
-                  <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right' }}>{fmtNum(line.unit_cost_source_currency)}</td>
-                  <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right', color: D.secondary }}>{line.exchange_rate_used}</td>
-                  <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right' }}>{fmtNum(line.unit_cost_valuation_currency)}</td>
-                  <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right', fontWeight: 600 }}>{fmtNum(line.line_total_valuation_currency)}</td>
-                  <td style={{ padding: '9px 12px', color: D.secondary, fontSize: '11px' }}>{line.cost_source}</td>
-                  <td style={{ padding: '9px 12px' }}>
-                    {line.has_missing_cost && <span style={{ color: D.red, fontSize: '11px', fontWeight: 600 }}>MISSING</span>}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+
+        {/* Lines tab */}
+        {activeTab === 'lines' && (
+          <div>
+            <div style={{ padding: '10px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '8px', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {(report.missing_cost_count ?? 0) > 0 && (
+                <span style={{ fontSize: '12px', color: D.red, background: '#fef2f2', border: `1px solid #fecaca`, padding: '4px 10px', borderRadius: '12px' }}>
+                  {report.missing_cost_count} missing costs
+                </span>
+              )}
+              {(report.linesTotalPages ?? 1) > 1 && (
+                <>
+                  <span style={{ fontSize: '12px', color: D.secondary }}>page {linesPage} of {report.linesTotalPages}</span>
+                  <button
+                    onClick={() => loadLines(linesPage - 1)}
+                    disabled={linesPage <= 1 || linesLoading}
+                    style={{ padding: '4px 10px', fontSize: '12px', border: `1px solid ${D.border}`, borderRadius: '5px', background: D.bg, cursor: 'pointer', opacity: linesPage <= 1 ? 0.5 : 1 }}
+                  >← Prev</button>
+                  <button
+                    onClick={() => loadLines(linesPage + 1)}
+                    disabled={linesPage >= (report.linesTotalPages ?? 1) || linesLoading}
+                    style={{ padding: '4px 10px', fontSize: '12px', border: `1px solid ${D.border}`, borderRadius: '5px', background: D.bg, cursor: 'pointer', opacity: linesPage >= (report.linesTotalPages ?? 1) ? 0.5 : 1 }}
+                  >Next →</button>
+                </>
+              )}
+            </div>
+            {linesLoading && (
+              <div style={{ padding: '12px 20px', borderBottom: `1px solid ${D.border}`, fontSize: '12px', color: D.secondary }}>Loading lines…</div>
+            )}
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ background: D.bg, borderBottom: `1px solid ${D.border}` }}>
+                    {['Part #', 'Description', 'Warehouse', 'Qty', 'Source Ccy', 'Unit Cost (Src)', 'FX Rate', `Unit Cost (${ccy})`, `Line Total (${ccy})`, 'Cost Source', ''].map(h => (
+                      <th key={h} style={{ padding: '10px 12px', textAlign: h === '' || h.includes('Cost') || h.includes('Total') || h === 'Qty' || h === 'FX Rate' ? 'right' : 'left', fontWeight: 600, color: D.secondary, whiteSpace: 'nowrap' }}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {report.lines.length === 0 ? (
+                    <tr><td colSpan={11} style={{ padding: '20px', textAlign: 'center', color: D.secondary }}>No lines</td></tr>
+                  ) : report.lines.map(line => (
+                    <tr key={line.id} style={{ borderBottom: `1px solid ${D.border}`, background: line.has_missing_cost ? '#fff8f8' : undefined }}>
+                      <td style={{ padding: '9px 12px', fontFamily: 'monospace', fontWeight: 600, color: D.dark }}>{line.skus?.part_number}</td>
+                      <td style={{ padding: '9px 12px', color: D.dark, maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{line.skus?.name}</td>
+                      <td style={{ padding: '9px 12px', color: D.secondary }}>{line.warehouses?.name ?? line.warehouses?.code ?? '—'}</td>
+                      <td style={{ padding: '9px 12px', textAlign: 'right' }}>{fmtNum(line.quantity, 0)}</td>
+                      <td style={{ padding: '9px 12px', textAlign: 'right', color: D.secondary }}>{line.source_currency}</td>
+                      <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right' }}>{fmtNum(line.unit_cost_source_currency)}</td>
+                      <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right', color: D.secondary }}>{line.exchange_rate_used}</td>
+                      <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right' }}>{fmtNum(line.unit_cost_valuation_currency)}</td>
+                      <td style={{ padding: '9px 12px', fontFamily: 'monospace', textAlign: 'right', fontWeight: 600 }}>{fmtNum(line.line_total_valuation_currency)}</td>
+                      <td style={{ padding: '9px 12px', color: D.secondary, fontSize: '11px' }}>{line.cost_source}</td>
+                      <td style={{ padding: '9px 12px' }}>
+                        {line.has_missing_cost && <span style={{ color: D.red, fontSize: '11px', fontWeight: 600 }}>MISSING</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
       </div>
 
       {report.notes && (

@@ -613,6 +613,7 @@ async function commitPriceList(
       part_number:          partNum,
       unit_price:           price,
       currency:             ccy,
+      import_job_row_id:    r.rowId ?? null,
       _rowNumber:           r.rowNumber,
     })
   }
@@ -778,19 +779,20 @@ async function commitPurchaseHistory(
     if (supplierId) importedSupIds.add(supplierId)
 
     toInsert.push({
-      organization_id:  orgId,
-      site_id:          siteId,
-      sku_id:           skuId,
-      supplier_id:      supplierId,
-      purchase_date:    purchaseDate,
+      organization_id:   orgId,
+      site_id:           siteId,
+      sku_id:            skuId,
+      supplier_id:       supplierId,
+      purchase_date:     purchaseDate,
       quantity,
-      unit_cost:        unitCost,
+      unit_cost:         unitCost,
       currency,
-      source_system:    srcSystem,
-      source_reference: srcRef,
-      import_job_id:    jobId,
-      created_by:       userId,
-      _rowNumber:       r.rowNumber,
+      source_system:     srcSystem,
+      source_reference:  srcRef,
+      import_job_id:     jobId,
+      import_job_row_id: r.rowId ?? null,
+      created_by:        userId,
+      _rowNumber:        r.rowNumber,
     })
   }
 

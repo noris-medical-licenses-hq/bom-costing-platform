@@ -2,6 +2,7 @@ import type { ImportType } from './importTypes'
 
 export interface RowValidationResult {
   rowNumber: number
+  rowId?: string          // UUID of the import_job_rows record — set by commit route, not validate
   status: 'valid' | 'warning' | 'error'
   errors: string[]
   warnings: string[]

@@ -355,6 +355,115 @@ export default function CostBuildsPage() {
   )
 }
 
+// ─── Explosion Modal ──────────────────────────────────────────────────────────
+
+type ExplosionNode = {
+  sku_id: string; part_number: string | null; name: string | null
+  strategy: string; source_reference: string | null
+  resolved_cost: number; currency: string
+  bom_quantity?: number; unit_of_measure?: string
+  extended_cost?: number; contribution_pct?: number
+  is_leaf: boolean; depth: number; children: ExplosionNode[]
+}
+
+function ExplosionTree({ node, currency }: { node: ExplosionNode; currency: string }) {
+  const [expanded, setExpanded] = useState(node.depth < 2)
+  const indent = node.depth * 20
+  const hasChildren = node.children.length > 0
+
+  return (
+    <div>
+      <div
+        onClick={() => hasChildren && setExpanded(e => !e)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: '8px',
+          padding: '7px 16px 7px ' + (16 + indent) + 'px',
+          borderBottom: '1px solid #F3F4F6',
+          cursor: hasChildren ? 'pointer' : 'default',
+          background: node.depth === 0 ? '#FAFAFA' : '#FFFFFF',
+        }}
+      >
+        <span style={{ width: '14px', flexShrink: 0, color: '#9CA3AF', fontSize: '11px', textAlign: 'center' }}>
+          {hasChildren ? (expanded ? '▾' : '▸') : '·'}
+        </span>
+        <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: node.depth === 0 ? 700 : 500, flex: 1, color: '#111827', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {node.part_number ?? node.sku_id.slice(0, 8)}
+          {node.name && <span style={{ fontFamily: 'inherit', fontWeight: 400, color: '#6B7280', marginLeft: '6px' }}>{node.name}</span>}
+        </span>
+        {node.bom_quantity != null && node.depth > 0 && (
+          <span style={{ fontSize: '11px', color: '#6B7280', flexShrink: 0 }}>×{node.bom_quantity} {node.unit_of_measure}</span>
+        )}
+        <span style={{ fontSize: '11px', color: '#6B7280', flexShrink: 0, minWidth: '80px', textAlign: 'right' }}>
+          {node.strategy === 'not_in_build' ? <span style={{ color: '#DC2626' }}>not in build</span> : node.strategy}
+        </span>
+        <span style={{ fontFamily: 'monospace', fontSize: '13px', fontWeight: 600, color: '#111827', flexShrink: 0, minWidth: '100px', textAlign: 'right' }}>
+          {node.strategy !== 'not_in_build' ? `${currency} ${Number(node.resolved_cost).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}` : '—'}
+        </span>
+        {node.contribution_pct != null && node.depth > 0 && (
+          <span style={{ fontSize: '11px', color: '#6B7280', flexShrink: 0, minWidth: '45px', textAlign: 'right' }}>
+            {node.contribution_pct.toFixed(1)}%
+          </span>
+        )}
+      </div>
+      {expanded && node.children.map(child => (
+        <ExplosionTree key={child.sku_id + child.depth} node={child} currency={currency} />
+      ))}
+    </div>
+  )
+}
+
+function ExplosionModal({ buildId, skuId, currency, onClose }: { buildId: string; skuId: string; currency: string; onClose: () => void }) {
+  const [data, setData]       = useState<{ root: ExplosionNode; node_count: number; max_depth: number } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [err, setErr]         = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch(`/api/cost-builds/${buildId}/lines/${skuId}/explosion`)
+      .then(r => r.json())
+      .then(j => { setLoading(false); if (j.error) setErr(j.error); else setData(j.data) })
+      .catch(() => { setLoading(false); setErr('Failed to load') })
+  }, [buildId, skuId])
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 2000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+      <div style={{ background: '#FFFFFF', borderRadius: '10px', width: '100%', maxWidth: '760px', maxHeight: '85vh', overflow: 'hidden', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,0.25)' }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid #E5E7EB', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: '#6B7280', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Cost Explosion</div>
+            <div style={{ fontSize: '15px', fontWeight: 700, color: '#111827' }}>BOM Rollup Breakdown</div>
+          </div>
+          {data && (
+            <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: '#6B7280', marginRight: 'auto', marginLeft: '20px' }}>
+              <span>{data.node_count} components</span>
+              <span>{data.max_depth} levels deep</span>
+            </div>
+          )}
+          <button onClick={onClose} style={{ background: 'none', border: 'none', fontSize: '20px', cursor: 'pointer', color: '#6B7280', padding: '0 4px', lineHeight: 1 }}>×</button>
+        </div>
+        <div style={{ overflowY: 'auto', flex: 1 }}>
+          {loading && <div style={{ padding: '32px', textAlign: 'center', color: '#6B7280', fontSize: '14px' }}>Loading BOM explosion…</div>}
+          {err    && <div style={{ padding: '20px', color: '#DC2626', fontSize: '13px' }}>{err}</div>}
+          {data && (
+            <>
+              <div style={{ display: 'flex', padding: '6px 16px', borderBottom: '1px solid #E5E7EB', background: '#F9FAFB', fontSize: '11px', fontWeight: 600, color: '#6B7280' }}>
+                <span style={{ width: '14px', flexShrink: 0 }} />
+                <span style={{ flex: 1, paddingLeft: '8px' }}>Component</span>
+                <span style={{ minWidth: '80px', textAlign: 'right' }}>Strategy</span>
+                <span style={{ minWidth: '100px', textAlign: 'right' }}>Unit Cost</span>
+                <span style={{ minWidth: '45px', textAlign: 'right' }}>% Share</span>
+              </div>
+              <ExplosionTree node={data.root} currency={currency} />
+            </>
+          )}
+        </div>
+        <div style={{ padding: '12px 20px', borderTop: '1px solid #E5E7EB', fontSize: '12px', color: '#6B7280', flexShrink: 0 }}>
+          Costs from cost build · Click rows to expand/collapse sub-assemblies · Max 5 levels shown
+        </div>
+      </div>
+    </div>
+  )
+}
+
 // ─── Build Detail Panel ───────────────────────────────────────────────────────
 
 function BuildDetail({
@@ -364,8 +473,9 @@ function BuildDetail({
   onRun: () => void; onApprove: () => void; onLock: () => void
   onClose: () => void; error: string | null
 }) {
-  const [search, setSearch] = useState('')
+  const [search, setSearch]         = useState('')
   const [filterType, setFilterType] = useState('')
+  const [explosion, setExplosion]   = useState<{ skuId: string; currency: string } | null>(null)
 
   const filteredLines = lines.filter(l => {
     const q = search.toLowerCase()
@@ -536,7 +646,7 @@ function BuildDetail({
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
               <thead style={{ position: 'sticky', top: 0, background: D.bg, zIndex: 1 }}>
                 <tr style={{ borderBottom: `1px solid ${D.border}` }}>
-                  {['Part Number', 'Item Type', 'Strategy Used', 'Source', 'Fallback Path', 'Cost'].map(h => (
+                  {['Part Number', 'Item Type', 'Strategy Used', 'Source', 'Fallback Path', 'Cost', ''].map(h => (
                     <th key={h} style={{ padding: '8px 14px', textAlign: 'left', fontSize: '11px', fontWeight: 600, color: D.secondary, whiteSpace: 'nowrap' }}>{h}</th>
                   ))}
                 </tr>
@@ -565,11 +675,30 @@ function BuildDetail({
                     <td style={{ padding: '7px 14px', fontFamily: 'monospace', fontWeight: 600, color: line.cost_strategy_used === 'none' ? D.error : D.dark, textAlign: 'right', whiteSpace: 'nowrap' }}>
                       {line.cost_strategy_used !== 'none' ? fmtCost(Number(line.resolved_cost), line.currency) : '—'}
                     </td>
+                    <td style={{ padding: '7px 8px' }}>
+                      {(line.cost_strategy_used === 'BOM_ROLLUP' || line.cost_strategy_used === 'MFG_COST_ROLLUP') && (
+                        <button
+                          onClick={() => setExplosion({ skuId: line.sku_id, currency: line.currency })}
+                          style={{ fontSize: '11px', padding: '2px 8px', borderRadius: '4px', border: `1px solid ${D.border}`, background: D.card, color: D.blue, cursor: 'pointer', whiteSpace: 'nowrap' }}
+                        >
+                          Explain
+                        </button>
+                      )}
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
+
+          {explosion && (
+            <ExplosionModal
+              buildId={build.id}
+              skuId={explosion.skuId}
+              currency={explosion.currency}
+              onClose={() => setExplosion(null)}
+            />
+          )}
 
           <div style={{ padding: '10px 20px', borderTop: `1px solid ${D.border}`, display: 'flex', justifyContent: 'space-between', fontSize: '12px', color: D.secondary }}>
             <span>Sum of resolved costs (informational — not a total inventory value)</span>
