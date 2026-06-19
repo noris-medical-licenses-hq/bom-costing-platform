@@ -970,6 +970,30 @@ export default function ImportsPage() {
             </div>
           )}
 
+          {/* Next step CTA for price list imports */}
+          {commitResult.qualityMetrics && (
+            <div style={{ textAlign: 'left', background: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '8px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#1565c0', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                  Next Step · Build Cost Set
+                </div>
+                <div style={{ fontSize: '15px', fontWeight: 700, color: D.dark, marginBottom: '4px' }}>
+                  Create a Cost Build for {commitResult.qualityMetrics.countryCode}
+                </div>
+                <div style={{ fontSize: '13px', color: D.secondary }}>
+                  {commitResult.qualityMetrics.priceListName} v{commitResult.qualityMetrics.versionNumber} is now active.
+                  Run a Cost Build to resolve SKU prices and generate a frozen Cost Set for inventory valuation.
+                </div>
+              </div>
+              <a
+                href="/cost-builds"
+                style={{ background: '#1565c0', color: '#fff', textDecoration: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: 700, fontSize: '14px', whiteSpace: 'nowrap', flexShrink: 0 }}
+              >
+                Create Cost Build →
+              </a>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
             <button onClick={reset} style={{ fontSize: '14px', padding: '8px 24px', background: D.red, color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>New import</button>
             <a href="/audit" style={{ fontSize: '14px', padding: '8px 24px', border: `1px solid ${D.border}`, borderRadius: '6px', background: D.card, color: D.dark, textDecoration: 'none', display: 'inline-block' }}>View audit log</a>

@@ -246,9 +246,26 @@ export default function CostBuildsPage() {
           {loading ? (
             <div style={{ padding: '32px', textAlign: 'center', color: D.secondary, fontSize: '14px' }}>Loading…</div>
           ) : filtered.length === 0 ? (
-            <div style={{ padding: '32px', textAlign: 'center', color: D.secondary, fontSize: '14px' }}>
-              No cost builds yet.{' '}
-              <button onClick={() => setShowCreate(true)} style={{ color: D.red, background: 'none', border: 'none', cursor: 'pointer', fontSize: '14px', padding: 0 }}>Create one →</button>
+            <div style={{ padding: '40px 32px', textAlign: 'center' }}>
+              <div style={{ fontSize: '32px', marginBottom: '12px' }}>⚙️</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: D.dark, marginBottom: '8px' }}>No Cost Builds yet</div>
+              <div style={{ fontSize: '14px', color: D.secondary, maxWidth: '400px', margin: '0 auto 20px', lineHeight: 1.5 }}>
+                A Cost Build resolves prices for all SKUs using a Country Price List, then freezes the results into a Cost Set for Inventory Valuation.
+              </div>
+              <div style={{ display: 'flex', gap: '12px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                <button
+                  onClick={() => setShowCreate(true)}
+                  style={{ background: D.red, color: '#fff', border: 'none', padding: '10px 24px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
+                >
+                  + Create Cost Build
+                </button>
+                <a
+                  href="/imports"
+                  style={{ border: `1px solid ${D.border}`, padding: '10px 24px', borderRadius: '6px', fontSize: '14px', color: D.secondary, textDecoration: 'none', display: 'inline-block' }}
+                >
+                  Import Price List first →
+                </a>
+              </div>
             </div>
           ) : (
             filtered.map(build => (
@@ -418,8 +435,20 @@ function BuildDetail({
       )}
 
       {build.status === 'locked' && (
-        <div style={{ padding: '12px 20px', background: '#F1F5F9', borderBottom: `1px solid ${D.border}`, fontSize: '13px', color: D.secondary }}>
-          🔒 This build is <strong>locked</strong> and immutable. Cost Set values are permanent.
+        <div style={{ padding: '12px 20px', background: '#F1F5F9', borderBottom: `1px solid ${D.border}`, fontSize: '13px', color: D.secondary, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+          <span>🔒 This build is <strong>locked</strong> and immutable. Cost Set values are permanent.</span>
+          <a href="/inventory" style={{ background: '#0d9488', color: '#fff', textDecoration: 'none', padding: '6px 14px', borderRadius: '5px', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Run Inventory Valuation →
+          </a>
+        </div>
+      )}
+
+      {build.status === 'approved' && (
+        <div style={{ padding: '12px 20px', background: '#F0FDF4', borderBottom: `1px solid #86EFAC`, fontSize: '13px', color: '#166534', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+          <span>✓ Build is <strong>approved</strong>. You can now run Inventory Valuation or lock the build to make it permanent.</span>
+          <a href="/inventory" style={{ background: '#16a34a', color: '#fff', textDecoration: 'none', padding: '6px 14px', borderRadius: '5px', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+            Run Inventory Valuation →
+          </a>
         </div>
       )}
 

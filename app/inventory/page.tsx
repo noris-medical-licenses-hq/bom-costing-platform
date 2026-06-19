@@ -141,8 +141,23 @@ export default function InventoryPage() {
             <tbody>
               {snapshots.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '32px', textAlign: 'center', color: D.secondary }}>
-                    No snapshots yet. Click <strong>+ New Snapshot</strong> to create one.
+                  <td colSpan={8} style={{ padding: '40px 32px', textAlign: 'center' }}>
+                    <div style={{ fontSize: '32px', marginBottom: '12px' }}>📦</div>
+                    <div style={{ fontSize: '15px', fontWeight: 700, color: D.dark, marginBottom: '8px' }}>No inventory snapshots yet</div>
+                    <div style={{ fontSize: '13px', color: D.secondary, maxWidth: '380px', margin: '0 auto 16px', lineHeight: 1.5 }}>
+                      An inventory snapshot captures on-hand quantities at a point in time. Once you have an approved Cost Build, create a snapshot and run valuation to compute stock values.
+                    </div>
+                    <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => setShowCreate(true)}
+                        style={{ background: D.red, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
+                      >
+                        + New Snapshot
+                      </button>
+                      <a href="/cost-builds" style={{ border: `1px solid ${D.border}`, padding: '8px 20px', borderRadius: '6px', fontSize: '13px', color: D.secondary, textDecoration: 'none', display: 'inline-block' }}>
+                        Check Cost Builds →
+                      </a>
+                    </div>
                   </td>
                 </tr>
               ) : snapshots.map((snap, i) => (
@@ -160,10 +175,15 @@ export default function InventoryPage() {
                   <td style={{ padding: '10px 14px', color: (snap.missing_cost_count ?? 0) > 0 ? D.error : D.secondary }}>
                     {snap.missing_cost_count ?? '—'}
                   </td>
-                  <td style={{ padding: '10px 14px' }}>
+                  <td style={{ padding: '10px 14px', display: 'flex', gap: '8px', alignItems: 'center' }}>
                     <a href={`/inventory/${snap.id}`} style={{ fontSize: '13px', fontWeight: 600, color: D.red, textDecoration: 'none' }}>
                       Open →
                     </a>
+                    {snap.status === 'approved' && (
+                      <a href={`/inventory/${snap.id}`} style={{ fontSize: '11px', fontWeight: 600, color: '#fff', background: '#0d9488', textDecoration: 'none', padding: '2px 8px', borderRadius: '4px', whiteSpace: 'nowrap' }}>
+                        Value →
+                      </a>
+                    )}
                   </td>
                 </tr>
               ))}
