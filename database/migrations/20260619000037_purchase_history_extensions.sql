@@ -10,9 +10,15 @@
 ALTER TABLE site_cost_builds
   ADD COLUMN IF NOT EXISTS base_currency text NOT NULL DEFAULT 'EUR';
 
-ALTER TABLE site_cost_builds
-  ADD CONSTRAINT IF NOT EXISTS site_cost_builds_base_currency_check
-  CHECK (char_length(base_currency) = 3);
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'site_cost_builds_base_currency_check'
+  ) THEN
+    ALTER TABLE site_cost_builds
+      ADD CONSTRAINT site_cost_builds_base_currency_check
+      CHECK (char_length(base_currency) = 3);
+  END IF;
+END $$;
 
 -- ── 2. site_cost_builds: average_purchase_lookback_days ─────────────────────
 -- Lookback window for AVERAGE_PURCHASE. Frozen into parameters_snapshot at
@@ -21,9 +27,15 @@ ALTER TABLE site_cost_builds
 ALTER TABLE site_cost_builds
   ADD COLUMN IF NOT EXISTS average_purchase_lookback_days integer NOT NULL DEFAULT 365;
 
-ALTER TABLE site_cost_builds
-  ADD CONSTRAINT IF NOT EXISTS site_cost_builds_lookback_check
-  CHECK (average_purchase_lookback_days IN (30, 90, 180, 365, 730));
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'site_cost_builds_lookback_check'
+  ) THEN
+    ALTER TABLE site_cost_builds
+      ADD CONSTRAINT site_cost_builds_lookback_check
+      CHECK (average_purchase_lookback_days IN (30, 90, 180, 365, 730));
+  END IF;
+END $$;
 
 -- ── 3. audit_log: extend event_type ─────────────────────────────────────────
 -- Drop and recreate the CHECK constraint with the new event type appended.
