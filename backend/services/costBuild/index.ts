@@ -41,7 +41,8 @@ export async function runCostBuild(
 
   if (buildErr || !build) throw new Error(`Cost build not found: ${buildId}`)
   if (build.status === 'running') throw new Error('Build is already running')
-  if (build.status === 'complete') throw new Error('Build is already complete — archive it first')
+  if (['approved', 'locked'].includes(build.status)) throw new Error(`Build is ${build.status} and cannot be re-run`)
+  if (build.status === 'complete') throw new Error('Build is already complete — archive it first or approve it')
 
   await db.from('site_cost_builds')
     .update({ status: 'running' })
@@ -50,6 +51,50 @@ export async function runCostBuild(
   const valuationDate = new Date().toISOString().slice(0, 10)
 
   try {
+    // ── Resolve price list version ────────────────────────────────────────────
+    // Use the pinned version if the user set one; otherwise auto-detect the latest
+    // active version for the site's country.
+    let priceListVersionId: string | null = build.price_list_version_id ?? null
+
+    if (!priceListVersionId) {
+      const { data: siteData } = await db
+        .from('sites')
+        .select('country')
+        .eq('id', build.site_id)
+        .maybeSingle()
+      const siteCountry: string | null = siteData?.country ?? null
+
+      if (siteCountry) {
+        const { data: plRows } = await db
+          .from('country_price_lists')
+          .select('id')
+          .eq('organization_id', orgId)
+          .eq('country_code', siteCountry)
+          .eq('is_active', true)
+          .limit(1)
+
+        const priceListId: string | null = plRows?.[0]?.id ?? null
+
+        if (priceListId) {
+          const { data: vRows } = await db
+            .from('price_list_versions')
+            .select('id')
+            .eq('price_list_id', priceListId)
+            .eq('status', 'active')
+            .order('effective_date', { ascending: false })
+            .limit(1)
+          priceListVersionId = vRows?.[0]?.id ?? null
+        }
+      }
+    }
+
+    // Record which version was used so this build is reproducible
+    if (priceListVersionId) {
+      await db.from('site_cost_builds')
+        .update({ price_list_version_id: priceListVersionId })
+        .eq('id', buildId)
+    }
+
     // ── Create frozen cost_set ────────────────────────────────────────────────
     const siteName: string = (build.sites as any)?.name ?? build.site_id
     const strategyLabel = build.default_strategy.replace(/_/g, ' ')
@@ -58,16 +103,17 @@ export async function runCostBuild(
     const { data: costSet, error: csErr } = await db
       .from('cost_sets')
       .insert({
-        organization_id: orgId,
-        name:            costSetName,
-        cost_set_type:   build.default_strategy,
-        effective_from:  valuationDate,
-        base_currency:   'USD',
-        is_active:       true,
-        is_frozen:       false,
-        site_id:         build.site_id,
-        source_build_id: buildId,
-        notes:           `Auto-created by cost build ${buildId}`,
+        organization_id:      orgId,
+        name:                 costSetName,
+        cost_set_type:        build.default_strategy,
+        effective_from:       valuationDate,
+        base_currency:        'USD',
+        is_active:            true,
+        is_frozen:            false,
+        site_id:              build.site_id,
+        source_build_id:      buildId,
+        price_list_version_id: priceListVersionId,
+        notes:                `Auto-created by cost build ${buildId}`,
       })
       .select('id')
       .single()
@@ -80,7 +126,7 @@ export async function runCostBuild(
       .update({ cost_set_id: costSetId })
       .eq('id', buildId)
 
-    const ctx: BuildStrategyContext = { orgId, siteId: build.site_id, costSetId, db, valuationDate }
+    const ctx: BuildStrategyContext = { orgId, siteId: build.site_id, costSetId, db, valuationDate, priceListVersionId }
 
     // ── Load all active SKUs ──────────────────────────────────────────────────
     const { data: skuRows } = await db

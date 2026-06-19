@@ -8,21 +8,21 @@ const D = {
   redLight: '#FEF2F2', warnLight: '#FFFBEB', successLight: '#F0FDF4',
 }
 
-type SiteStatus = 'active' | 'archived' | 'pending_delete' | 'deleted'
+type SiteStatus = 'active' | 'archived'
 
 type Site = {
   id: string; code: string; name: string; country: string | null
   default_currency: string; status: SiteStatus; is_active: boolean
-  notes: string | null; created_at: string; pending_delete_at: string | null; archived_at: string | null
+  notes: string | null; created_at: string; archived_at: string | null
 }
 
 type LinkedCounts = { warehouses: number; cost_builds: number; cost_sets: number; inventory_snapshots: number }
 
 const STATUS_LABEL: Record<SiteStatus, string> = {
-  active: 'Active', archived: 'Archived', pending_delete: 'Pending Deletion', deleted: 'Deleted',
+  active: 'Active', archived: 'Archived',
 }
 const STATUS_COLOR: Record<SiteStatus, string> = {
-  active: D.success, archived: D.secondary, pending_delete: D.error, deleted: D.error,
+  active: D.success, archived: D.secondary,
 }
 
 const iStyle: React.CSSProperties = {
@@ -133,168 +133,9 @@ function ArchiveModal({ site, onClose, onDone }: { site: Site; onClose: () => vo
   )
 }
 
-// ─── Delete request modal (4-step) ───────────────────────────────────────────
-
-const DELETE_REASONS = [
-  { value: 'end_of_life',  label: 'Site closed / End of life' },
-  { value: 'restructuring', label: 'Organizational restructuring' },
-  { value: 'duplicate',    label: 'Duplicate record' },
-  { value: 'data_error',   label: 'Created in error' },
-  { value: 'other',        label: 'Other' },
-]
-
-function DeleteRequestModal({ site, onClose, onDone }: { site: Site; onClose: () => void; onDone: () => void }) {
-  const [step, setStep] = useState<1|2|3|4>(1)
-  const [reasonCode, setReasonCode] = useState('end_of_life')
-  const [reasonText, setReasonText] = useState('')
-  const [typedCode, setTypedCode]   = useState('')
-  const [loading, setLoading]       = useState(false)
-  const [error, setError]           = useState<string | null>(null)
-  const [counts, setCounts]         = useState<LinkedCounts>({ warehouses: 0, cost_builds: 0, cost_sets: 0, inventory_snapshots: 0 })
-  const [blocked, setBlocked]       = useState(false)
-
-  useEffect(() => {
-    fetch(`/api/sites/${site.id}`).then(r => r.json()).then(d => {
-      setCounts(d.linkedCounts ?? { warehouses: 0, cost_builds: 0, cost_sets: 0, inventory_snapshots: 0 })
-    })
-  }, [site.id])
-
-  async function handleDeleteRequest() {
-    setLoading(true); setError(null)
-    const res = await fetch(`/api/sites/${site.id}/delete-request`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ siteCode: typedCode, reason: reasonText || DELETE_REASONS.find(r => r.value === reasonCode)?.label, reasonCode }),
-    })
-    const data = await res.json()
-    setLoading(false)
-    if (!res.ok) {
-      if (data.blocked) setBlocked(true)
-      setError(data.error); return
-    }
-    onDone()
-  }
-
-  const pendingDelete72h = site.pending_delete_at ? new Date(site.pending_delete_at).toLocaleString() : ''
-
-  return (
-    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '24px' }}>
-      <div style={{ background: D.card, borderRadius: '10px', padding: '28px', width: '520px', maxWidth: '100%', boxShadow: '0 20px 60px rgba(0,0,0,0.2)' }}>
-        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-          {[1,2,3,4].map(s => (
-            <div key={s} style={{ flex: 1, height: '4px', borderRadius: '99px', background: s <= step ? D.error : D.border }} />
-          ))}
-        </div>
-
-        <div style={{ fontSize: '17px', fontWeight: 700, color: D.error, marginBottom: '4px' }}>Request Site Deletion</div>
-        <div style={{ fontSize: '13px', color: D.secondary, marginBottom: '20px' }}>
-          <strong>{site.name}</strong> ({site.code})
-        </div>
-
-        {error && (
-          <div style={{ background: D.redLight, border: `1px solid ${D.error}`, borderRadius: '6px', padding: '10px 14px', fontSize: '13px', color: D.error, marginBottom: '16px' }}>
-            {error}
-            {blocked && <div style={{ marginTop: '6px', fontWeight: 600 }}>This site is permanently blocked from deletion due to historical cost builds or inventory snapshots. You may only archive it.</div>}
-          </div>
-        )}
-
-        {/* Step 1: Warning */}
-        {step === 1 && (
-          <>
-            <LinkedEntitiesWarning counts={counts} />
-            <div style={{ background: D.redLight, border: `1px solid #FECACA`, borderRadius: '6px', padding: '14px 16px', fontSize: '13px', color: D.error, marginBottom: '20px', lineHeight: 1.7 }}>
-              <strong>Warning:</strong> Requesting deletion will move the site to <strong>Pending Deletion</strong> status for 72 hours.
-              After 72 hours it requires admin action to permanently delete.<br />
-              Sites with historical cost builds or inventory snapshots <strong>cannot be permanently deleted</strong>.
-            </div>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={onClose} style={{ padding: '8px 18px', border: `1px solid ${D.border}`, borderRadius: '6px', cursor: 'pointer', background: D.card, fontSize: '13px' }}>Cancel</button>
-              <button onClick={() => setStep(2)} style={{ padding: '8px 18px', background: D.error, color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontSize: '13px' }}>
-                I understand →
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* Step 2: Reason */}
-        {step === 2 && (
-          <>
-            <div style={{ marginBottom: '14px' }}>
-              <label style={labelStyle}>Reason for deletion *</label>
-              <select value={reasonCode} onChange={e => setReasonCode(e.target.value)} style={iStyle}>
-                {DELETE_REASONS.map(r => <option key={r.value} value={r.value}>{r.label}</option>)}
-              </select>
-            </div>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={labelStyle}>Additional details</label>
-              <textarea value={reasonText} onChange={e => setReasonText(e.target.value)}
-                placeholder="Optional: describe why this site is being deleted…"
-                rows={3}
-                style={{ ...iStyle, resize: 'vertical', lineHeight: 1.5 }} />
-            </div>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setStep(1)} style={{ padding: '8px 18px', border: `1px solid ${D.border}`, borderRadius: '6px', cursor: 'pointer', background: D.card, fontSize: '13px' }}>← Back</button>
-              <button onClick={() => setStep(3)} style={{ padding: '8px 18px', background: D.error, color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: 'pointer', fontSize: '13px' }}>
-                Continue →
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* Step 3: Type site code */}
-        {step === 3 && (
-          <>
-            <div style={{ background: D.warnLight, border: '1px solid #FDE68A', borderRadius: '6px', padding: '12px 16px', fontSize: '13px', color: '#92400E', marginBottom: '16px' }}>
-              Type the site code <strong>{site.code}</strong> exactly to confirm you understand this action.
-            </div>
-            <div style={{ marginBottom: '20px' }}>
-              <label style={labelStyle}>Confirm site code</label>
-              <input
-                value={typedCode}
-                onChange={e => setTypedCode(e.target.value.toUpperCase())}
-                placeholder={site.code}
-                style={{ ...iStyle, fontFamily: 'monospace', fontSize: '15px', fontWeight: 600, borderColor: typedCode && typedCode !== site.code ? D.error : D.border }}
-                autoFocus
-              />
-            </div>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setStep(2)} style={{ padding: '8px 18px', border: `1px solid ${D.border}`, borderRadius: '6px', cursor: 'pointer', background: D.card, fontSize: '13px' }}>← Back</button>
-              <button
-                onClick={() => { if (typedCode === site.code) setStep(4) }}
-                disabled={typedCode !== site.code}
-                style={{ padding: '8px 18px', background: D.error, color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: typedCode !== site.code ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: typedCode !== site.code ? 0.4 : 1 }}
-              >
-                Continue →
-              </button>
-            </div>
-          </>
-        )}
-
-        {/* Step 4: Final confirm */}
-        {step === 4 && (
-          <>
-            <div style={{ background: D.redLight, border: `1px solid #FECACA`, borderRadius: '6px', padding: '14px 16px', fontSize: '13px', color: D.error, marginBottom: '20px', lineHeight: 1.7 }}>
-              <strong>Final confirmation:</strong> Site <strong>{site.code}</strong> will be moved to Pending Deletion.
-              It will be recoverable until <strong>{new Date(Date.now() + 72*60*60*1000).toLocaleString()}</strong>.
-              After that, admin action is required for permanent deletion.
-              All historical data remains readable.
-            </div>
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button onClick={() => setStep(3)} style={{ padding: '8px 18px', border: `1px solid ${D.border}`, borderRadius: '6px', cursor: 'pointer', background: D.card, fontSize: '13px' }}>← Back</button>
-              <button
-                onClick={handleDeleteRequest}
-                disabled={loading}
-                style={{ padding: '8px 18px', background: D.error, color: '#fff', border: 'none', borderRadius: '6px', fontWeight: 600, cursor: loading ? 'not-allowed' : 'pointer', fontSize: '13px', opacity: loading ? 0.6 : 1 }}
-              >
-                {loading ? 'Processing…' : 'Request Deletion'}
-              </button>
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  )
-}
+// DeleteRequestModal removed — M-032 business correction:
+// Sites with ANY historical data must never be physically deleted.
+// Only Archive / Restore is allowed. Statuses: active | archived.
 
 // ─── Create / Edit form ───────────────────────────────────────────────────────
 
@@ -360,7 +201,6 @@ export default function SitesPage() {
   const [showCreate,     setShowCreate]    = useState(false)
   const [editSite,       setEditSite]      = useState<Site | null>(null)
   const [archiveTarget,  setArchiveTarget] = useState<Site | null>(null)
-  const [deleteTarget,   setDeleteTarget]  = useState<Site | null>(null)
   const [showArchived,   setShowArchived]  = useState(true)
   const [error,          setError]         = useState<string | null>(null)
 
@@ -404,9 +244,7 @@ export default function SitesPage() {
     load()
   }
 
-  const filteredSites = showArchived
-    ? sites.filter(s => s.status !== 'deleted')
-    : sites.filter(s => s.status === 'active')
+  const filteredSites = showArchived ? sites : sites.filter(s => s.status === 'active')
 
   return (
     <div>
@@ -415,13 +253,6 @@ export default function SitesPage() {
           site={archiveTarget}
           onClose={() => setArchiveTarget(null)}
           onDone={() => { setArchiveTarget(null); load() }}
-        />
-      )}
-      {deleteTarget && (
-        <DeleteRequestModal
-          site={deleteTarget}
-          onClose={() => setDeleteTarget(null)}
-          onDone={() => { setDeleteTarget(null); load() }}
         />
       )}
       {editSite && (
@@ -459,7 +290,7 @@ export default function SitesPage() {
       <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
         <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', color: D.secondary }}>
           <input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />
-          Show archived &amp; pending deletion
+          Show archived sites
         </label>
         <span style={{ fontSize: '13px', color: D.secondary }}>
           {filteredSites.length} site{filteredSites.length !== 1 ? 's' : ''}
@@ -489,11 +320,6 @@ export default function SitesPage() {
                   <td style={{ padding: '10px 14px', fontFamily: 'monospace', color: D.secondary }}>{site.default_currency}</td>
                   <td style={{ padding: '10px 14px' }}>
                     <span style={{ color: STATUS_COLOR[site.status], fontWeight: 500 }}>{STATUS_LABEL[site.status]}</span>
-                    {site.status === 'pending_delete' && site.pending_delete_at && (
-                      <div style={{ fontSize: '11px', color: D.secondary, marginTop: '2px' }}>
-                        Recoverable until {new Date(site.pending_delete_at).toLocaleString()}
-                      </div>
-                    )}
                   </td>
                   <td style={{ padding: '10px 14px', color: D.secondary }}>{new Date(site.created_at).toLocaleDateString()}</td>
                   <td style={{ padding: '8px 14px' }}>
@@ -505,13 +331,7 @@ export default function SitesPage() {
                         </>
                       )}
                       {site.status === 'archived' && (
-                        <>
-                          <button onClick={() => handleRestore(site)} style={{ fontSize: '12px', padding: '4px 10px', border: `1px solid ${D.success}`, borderRadius: '4px', cursor: 'pointer', background: D.successLight, color: D.success, fontWeight: 600 }}>Restore</button>
-                          <button onClick={() => setDeleteTarget(site)} style={{ fontSize: '12px', padding: '4px 10px', border: `1px solid ${D.error}`, borderRadius: '4px', cursor: 'pointer', background: D.redLight, color: D.error, fontWeight: 600 }}>Request Delete</button>
-                        </>
-                      )}
-                      {site.status === 'pending_delete' && (
-                        <button onClick={() => handleRestore(site)} style={{ fontSize: '12px', padding: '4px 10px', border: `1px solid ${D.success}`, borderRadius: '4px', cursor: 'pointer', background: D.successLight, color: D.success, fontWeight: 600 }}>Recover</button>
+                        <button onClick={() => handleRestore(site)} style={{ fontSize: '12px', padding: '4px 10px', border: `1px solid ${D.success}`, borderRadius: '4px', cursor: 'pointer', background: D.successLight, color: D.success, fontWeight: 600 }}>Restore</button>
                       )}
                     </div>
                   </td>
@@ -523,9 +343,9 @@ export default function SitesPage() {
       )}
 
       <div style={{ marginTop: '32px', padding: '16px 20px', background: D.warnLight, border: '1px solid #FDE68A', borderRadius: '8px', fontSize: '13px', color: '#92400E' }}>
-        <strong>Governance policy:</strong> Archived sites are recoverable at any time. Sites with pending deletion are recoverable for 72 hours.
-        Sites that have historical Cost Builds or Inventory Snapshots <strong>cannot be permanently deleted</strong> — their data must remain readable.
-        Permanent deletion requires admin action after the 72-hour window.
+        <strong>Governance policy:</strong> Sites may be set to <strong>Active</strong> or <strong>Archived</strong> only.
+        Sites with historical Cost Builds, Inventory Snapshots, Cost Sets, or Audit Records are permanently protected from deletion — archiving is the only allowed action.
+        Archived sites remain readable in all historical reports and Cost Builds.
       </div>
     </div>
   )

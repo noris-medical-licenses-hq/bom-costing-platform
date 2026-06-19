@@ -6,21 +6,24 @@ const D = {
   bg: '#F8F9FA', card: '#FFFFFF', border: '#E5E7EB',
   success: '#16a34a', warning: '#d97706', error: '#dc2626',
   redLight: '#FEF2F2', blue: '#1565c0', purple: '#4a148c',
+  teal: '#0d9488',
 }
 
+// Only operational strategies shown in UI — stubs (LAST_PURCHASE, etc.) are hidden.
 const STRATEGIES = [
-  { value: 'PRICE_LIST',    label: 'Price List',          desc: 'Use cheapest active supplier price per SKU' },
-  { value: 'BOM_ROLLUP',   label: 'BOM Rollup',          desc: 'Recursively roll up component costs from approved BOMs' },
-  { value: 'MAKE_OR_BUY',  label: 'Make or Buy',         desc: 'Try BOM rollup first; fall back to supplier price' },
-  { value: 'LAST_PURCHASE', label: 'Last Purchase',       desc: 'Use most recent purchase order price (stub)' },
-  { value: 'STANDARD_COST', label: 'Standard Cost',      desc: 'Use predefined standard cost (stub)' },
-  { value: 'CONTRACT_PRICE', label: 'Contract Price',    desc: 'Use contracted supplier price (stub)' },
+  { value: 'PRICE_LIST', label: 'Price List', desc: 'Read from imported country price list version' },
+  { value: 'BOM_ROLLUP', label: 'BOM Rollup', desc: 'Recursively roll up component costs from approved BOMs' },
 ]
 
-const STRATEGY_LABEL: Record<string, string> = Object.fromEntries(STRATEGIES.map(s => [s.value, s.label]))
+const STRATEGY_LABEL: Record<string, string> = {
+  PRICE_LIST: 'Price List', BOM_ROLLUP: 'BOM Rollup',
+  MAKE_OR_BUY: 'Make or Buy', LAST_PURCHASE: 'Last Purchase',
+  STANDARD_COST: 'Standard Cost', CONTRACT_PRICE: 'Contract Price',
+}
 
 const STATUS_COLOR: Record<string, string> = {
-  draft: D.secondary, running: D.warning, complete: D.success, failed: D.error, archived: D.secondary,
+  draft: D.secondary, running: D.warning, complete: D.blue,
+  approved: D.teal, locked: D.dark, failed: D.error, archived: D.secondary,
 }
 const ITEM_TYPE_COLOR: Record<string, string> = {
   PURCHASED: D.blue, MANUFACTURED: D.success, MAKE_OR_BUY: D.warning, SERVICE: D.purple, MANUAL: D.secondary,
@@ -63,6 +66,7 @@ export default function CostBuildsPage() {
   const [buildDetail,  setBuildDetail]  = useState<{ build: Build; lines: BuildLine[] } | null>(null)
   const [loadingLines, setLoadingLines] = useState(false)
   const [running,      setRunning]      = useState(false)
+  const [actioning,    setActioning]    = useState(false)
   const [error,        setError]        = useState<string | null>(null)
   const [filterSite,   setFilterSite]   = useState('')
   const [form, setForm] = useState({
@@ -123,6 +127,27 @@ export default function CostBuildsPage() {
     const json = await res.json()
     setRunning(false)
     if (!res.ok) { setError(json.error ?? 'Build failed'); return }
+    await load()
+    openDetail(buildId)
+  }
+
+  async function approveBuild(buildId: string) {
+    setActioning(true); setError(null)
+    const res = await fetch(`/api/cost-builds/${buildId}/approve`, { method: 'POST' })
+    const json = await res.json()
+    setActioning(false)
+    if (!res.ok) { setError(json.error ?? 'Approve failed'); return }
+    await load()
+    openDetail(buildId)
+  }
+
+  async function lockBuild(buildId: string) {
+    if (!confirm('Lock this build? Locking is permanent — the build and its Cost Set cannot be modified after locking.')) return
+    setActioning(true); setError(null)
+    const res = await fetch(`/api/cost-builds/${buildId}/lock`, { method: 'POST' })
+    const json = await res.json()
+    setActioning(false)
+    if (!res.ok) { setError(json.error ?? 'Lock failed'); return }
     await load()
     openDetail(buildId)
   }
@@ -267,7 +292,10 @@ export default function CostBuildsPage() {
                 build={buildDetail.build}
                 lines={buildDetail.lines}
                 running={running}
+                actioning={actioning}
                 onRun={() => runBuild(buildDetail.build.id)}
+                onApprove={() => approveBuild(buildDetail.build.id)}
+                onLock={() => lockBuild(buildDetail.build.id)}
                 onClose={() => setSelectedId(null)}
                 error={error}
               />
@@ -282,10 +310,11 @@ export default function CostBuildsPage() {
 // ─── Build Detail Panel ───────────────────────────────────────────────────────
 
 function BuildDetail({
-  build, lines, running, onRun, onClose, error,
+  build, lines, running, actioning, onRun, onApprove, onLock, onClose, error,
 }: {
-  build: Build; lines: BuildLine[]; running: boolean
-  onRun: () => void; onClose: () => void; error: string | null
+  build: Build; lines: BuildLine[]; running: boolean; actioning: boolean
+  onRun: () => void; onApprove: () => void; onLock: () => void
+  onClose: () => void; error: string | null
 }) {
   const [search, setSearch] = useState('')
   const [filterType, setFilterType] = useState('')
@@ -351,8 +380,46 @@ function BuildDetail({
             {running ? '⏳ Running build…' : '▶ Run Cost Build'}
           </button>
           <div style={{ fontSize: '12px', color: D.secondary, marginTop: '6px' }}>
-            This will resolve costs for all active SKUs and create a frozen Cost Set.
+            Resolves costs for all active SKUs and creates a frozen Cost Set.
           </div>
+        </div>
+      )}
+
+      {/* Approve button — complete → approved */}
+      {build.status === 'complete' && (
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button
+            onClick={onApprove}
+            disabled={actioning}
+            style={{ background: D.teal, color: '#fff', border: 'none', padding: '10px 28px', borderRadius: '6px', cursor: actioning ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 600, opacity: actioning ? 0.7 : 1 }}
+          >
+            {actioning ? '…' : '✓ Approve Build'}
+          </button>
+          <div style={{ fontSize: '12px', color: D.secondary }}>
+            Approves this build for use in Inventory Valuation. After approval, the build can be locked.
+          </div>
+        </div>
+      )}
+
+      {/* Lock button — approved → locked */}
+      {build.status === 'approved' && (
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <button
+            onClick={onLock}
+            disabled={actioning}
+            style={{ background: D.dark, color: '#fff', border: 'none', padding: '10px 28px', borderRadius: '6px', cursor: actioning ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 600, opacity: actioning ? 0.7 : 1 }}
+          >
+            {actioning ? '…' : '🔒 Lock Build'}
+          </button>
+          <div style={{ fontSize: '12px', color: D.secondary }}>
+            Permanently locks this build. The build and its Cost Set cannot be modified after locking.
+          </div>
+        </div>
+      )}
+
+      {build.status === 'locked' && (
+        <div style={{ padding: '12px 20px', background: '#F1F5F9', borderBottom: `1px solid ${D.border}`, fontSize: '13px', color: D.secondary }}>
+          🔒 This build is <strong>locked</strong> and immutable. Cost Set values are permanent.
         </div>
       )}
 

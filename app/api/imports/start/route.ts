@@ -17,6 +17,7 @@ const Schema = z.object({
     priceListName:  z.string().optional(),
     targetCountry:  z.string().optional(),
     currency:       z.string().optional(),
+    effectiveDate:  z.string().optional(),  // ISO date, e.g. "2026-07-01"
   }).optional(),
 })
 

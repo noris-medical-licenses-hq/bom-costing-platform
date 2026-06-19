@@ -2,10 +2,12 @@
 // Each strategy is a pure async function: (skuId, ctx) → StrategyResult | null
 // null means "this strategy cannot produce a cost for this SKU" — triggers fallback.
 //
-// To add a new strategy (STANDARD_COST, CONTRACT_PRICE, etc.):
-//   1. Write the function below
-//   2. Register it in STRATEGY_REGISTRY
-//   No schema changes required.
+// Operational status:
+//   fully_operational  — reads live data, returns real costs in production
+//   placeholder        — always returns null; hidden from production UI
+//
+// To add a new strategy: write the function, register in STRATEGY_REGISTRY,
+// update STRATEGY_STATUS_MATRIX. No schema changes required.
 
 export interface StrategyResult {
   resolvedCost:     number
@@ -16,11 +18,12 @@ export interface StrategyResult {
 }
 
 export interface BuildStrategyContext {
-  orgId:          string
-  siteId:         string
-  costSetId:      string
-  db:             any  // service Supabase client (already cast)
-  valuationDate:  string
+  orgId:               string
+  siteId:              string
+  costSetId:           string
+  db:                  any  // service Supabase client (already cast)
+  valuationDate:       string
+  priceListVersionId:  string | null  // set at build start; null if no price list for site's country
 }
 
 export type StrategyFn = (
@@ -29,42 +32,36 @@ export type StrategyFn = (
 ) => Promise<StrategyResult | null>
 
 // ── PRICE_LIST ────────────────────────────────────────────────────────────────
-// Cheapest active supplier price as of the valuation date.
-// Prefers default_supplier_id if one is set.
+// Reads unit price from the price_list_version linked to this Cost Build.
+// Version is resolved at build start: latest active version for the site's country,
+// or a specific version pinned by the user.
 const priceListStrategy: StrategyFn = async (skuId, ctx) => {
-  const { data: sku } = await ctx.db
-    .from('skus')
-    .select('default_supplier_id')
-    .eq('id', skuId)
+  if (!ctx.priceListVersionId) return null
+
+  const { data } = await ctx.db
+    .from('price_list_version_items')
+    .select('id, unit_price, currency, price_list_versions(version_number, country_price_lists(name, country_code))')
+    .eq('price_list_version_id', ctx.priceListVersionId)
+    .eq('sku_id', skuId)
     .maybeSingle()
 
-  const { data: prices } = await ctx.db
-    .from('supplier_prices')
-    .select('id, unit_price, currency, supplier_id, suppliers(name, code)')
-    .eq('sku_id', skuId)
-    .lte('effective_from', ctx.valuationDate)
-    .or(`effective_to.is.null,effective_to.gte.${ctx.valuationDate}`)
-    .order('unit_price', { ascending: true })
+  if (!data) return null
 
-  if (!prices?.length) return null
-
-  const defaultId = sku?.default_supplier_id ?? null
-  const preferred = defaultId ? prices.find((p: any) => p.supplier_id === defaultId) : null
-  const sp = preferred ?? prices[0]
-  const supName: string = (sp.suppliers as any)?.name ?? sp.supplier_id
+  const version  = (data.price_list_versions as any)?.version_number ?? '?'
+  const listName = (data.price_list_versions as any)?.country_price_lists?.name ?? 'Price List'
+  const country  = (data.price_list_versions as any)?.country_price_lists?.country_code ?? ''
 
   return {
-    resolvedCost:     Number(sp.unit_price),
-    currency:         sp.currency,
-    sourceRecordType: 'supplier_price',
-    sourceRecordId:   sp.id,
-    sourceReference:  `Supplier: ${supName} — ${sp.unit_price} ${sp.currency}`,
+    resolvedCost:     Number(data.unit_price),
+    currency:         data.currency,
+    sourceRecordType: 'price_list_version',
+    sourceRecordId:   ctx.priceListVersionId,
+    sourceReference:  `${listName} (${country}) v${version} — ${data.unit_price} ${data.currency}`,
   }
 }
 
 // ── LAST_PURCHASE ─────────────────────────────────────────────────────────────
 // Stubbed: purchase order history not yet in schema.
-// Returns null to trigger fallback to PRICE_LIST.
 const lastPurchaseStrategy: StrategyFn = async () => null
 
 // ── AVERAGE_PURCHASE ──────────────────────────────────────────────────────────
@@ -98,6 +95,91 @@ export const STRATEGY_REGISTRY: Record<string, StrategyFn> = {
   CONTRACT_PRICE:         contractPriceStrategy,
   CUSTOMER_SPECIFIC_COST: customerSpecificCostStrategy,
 }
+
+// ─── Operational status matrix ────────────────────────────────────────────────
+
+export type StrategyStatus = 'fully_operational' | 'partially_operational' | 'placeholder'
+
+export interface StrategyMeta {
+  label:         string
+  status:        StrategyStatus
+  sourceTables:  string[]
+  fallbackChain: string[]
+  description:   string
+  notesForUI:    string
+}
+
+export const STRATEGY_STATUS_MATRIX: Record<string, StrategyMeta> = {
+  PRICE_LIST: {
+    label:         'Price List',
+    status:        'fully_operational',
+    sourceTables:  ['country_price_lists', 'price_list_versions', 'price_list_version_items'],
+    fallbackChain: ['LAST_PURCHASE', 'AVERAGE_PURCHASE'],
+    description:   'Reads unit price from the country price list version linked to the Cost Build.',
+    notesForUI:    'Requires an imported price list for the site country.',
+  },
+  BOM_ROLLUP: {
+    label:         'BOM Rollup',
+    status:        'fully_operational',
+    sourceTables:  ['boms', 'bom_versions', 'bom_lines', 'virtual_components'],
+    fallbackChain: [],
+    description:   'Recursively rolls up component costs using the latest approved BOM version.',
+    notesForUI:    'Requires approved BOMs for all manufactured assemblies.',
+  },
+  LAST_PURCHASE: {
+    label:         'Last Purchase',
+    status:        'placeholder',
+    sourceTables:  ['purchase_orders'],
+    fallbackChain: ['PRICE_LIST'],
+    description:   'Uses the most recent purchase order line price for this SKU.',
+    notesForUI:    'Not operational — purchase_orders table not yet in schema.',
+  },
+  AVERAGE_PURCHASE: {
+    label:         'Average Purchase',
+    status:        'placeholder',
+    sourceTables:  ['purchase_orders'],
+    fallbackChain: ['PRICE_LIST'],
+    description:   'Uses the 12-month weighted average purchase price.',
+    notesForUI:    'Not operational — purchase_orders table not yet in schema.',
+  },
+  MANUAL_OVERRIDE: {
+    label:         'Manual Override',
+    status:        'placeholder',
+    sourceTables:  ['sku_cost_overrides'],
+    fallbackChain: ['PRICE_LIST'],
+    description:   'Uses manually entered cost per SKU per site.',
+    notesForUI:    'Not operational — override read logic not yet wired.',
+  },
+  STANDARD_COST: {
+    label:         'Standard Cost',
+    status:        'placeholder',
+    sourceTables:  ['standard_costs'],
+    fallbackChain: ['PRICE_LIST'],
+    description:   'Uses a pre-defined annual standard cost per SKU.',
+    notesForUI:    'Not operational — standard_costs table not yet in schema.',
+  },
+  CONTRACT_PRICE: {
+    label:         'Contract Price',
+    status:        'placeholder',
+    sourceTables:  ['contracts', 'contract_lines'],
+    fallbackChain: ['PRICE_LIST'],
+    description:   'Uses supplier contract pricing active on the valuation date.',
+    notesForUI:    'Not operational — contracts table not yet in schema.',
+  },
+  CUSTOMER_SPECIFIC_COST: {
+    label:         'Customer-Specific Cost',
+    status:        'placeholder',
+    sourceTables:  ['customer_contracts', 'customer_price_lines'],
+    fallbackChain: ['PRICE_LIST'],
+    description:   'Uses cost from a customer-specific pricing agreement.',
+    notesForUI:    'Not operational — customer contracts not yet in schema.',
+  },
+}
+
+// Strategies safe to expose in the Cost Build creation UI (production-ready only).
+export const OPERATIONAL_STRATEGIES = Object.entries(STRATEGY_STATUS_MATRIX)
+  .filter(([, meta]) => meta.status === 'fully_operational')
+  .map(([key, meta]) => ({ value: key, label: meta.label, desc: meta.description }))
 
 // ─── Default fallback chains per item_cost_type ───────────────────────────────
 // BOM_ROLLUP is handled specially by the engine (recursive rollup, not registry).

@@ -3,10 +3,26 @@ import type { ImportType } from './importTypes'
 import type { RowValidationResult } from './importValidators'
 
 
+export interface PriceListQualityMetrics {
+  totalRows:          number
+  importedRows:       number
+  rejectedRows:       number
+  duplicateSkus:      number
+  missingSkus:        number
+  missingPrices:      number
+  currencyMismatches: number
+  priceListVersionId: string
+  priceListName:      string
+  countryCode:        string
+  versionNumber:      number
+  effectiveDate:      string
+}
+
 export interface CommitResult {
-  committed: number
-  skipped: number
-  errors: Array<{ row: number; error: string }>
+  committed:      number
+  skipped:        number
+  errors:         Array<{ row: number; error: string }>
+  qualityMetrics?: PriceListQualityMetrics
 }
 
 // Rows are processed in batches for all DB writes. This keeps individual
@@ -405,17 +421,17 @@ async function commitInventory(
 }
 
 // ─── Price List ───────────────────────────────────────────────────────────────
-// Creates a Cost Set from imported price list data.
-// Metadata (price_list_name, target_country, currency) is read from import_jobs.metadata.
+// Creates a country_price_list + price_list_version + price_list_version_items.
+// Never overwrites existing data — each import creates a new numbered version.
 
 const COUNTRY_NAME_TO_CODE: Record<string, string> = {
   germany: 'DE', deutschland: 'DE',
   france: 'FR', frankreich: 'FR',
   italy: 'IT', italia: 'IT',
-  spain: 'ES',
+  spain: 'ES', espana: 'ES',
   'united states': 'US', usa: 'US', america: 'US',
   'united kingdom': 'GB', uk: 'GB', britain: 'GB', england: 'GB',
-  austria: 'AT',
+  austria: 'AT', österreich: 'AT',
   switzerland: 'CH', schweiz: 'CH',
   netherlands: 'NL', holland: 'NL',
   belgium: 'BE',
@@ -445,114 +461,182 @@ async function commitPriceList(
 ): Promise<void> {
   const db = client as any
 
-  // Load job metadata for price list name, country, currency
+  // Load job metadata
   const { data: job } = await db.from('import_jobs').select('metadata, file_name').eq('id', jobId).single()
   const meta = (job?.metadata as Record<string, unknown>)?.price_list as Record<string, string> | undefined
 
-  const priceListName = meta?.priceListName ?? job?.file_name ?? `Price List ${new Date().toISOString().slice(0, 10)}`
-  const rawCountry    = (meta?.targetCountry ?? '').trim()
-  const currency      = ((meta?.currency ?? 'USD').trim().toUpperCase() || 'USD')
-  const today         = new Date().toISOString().slice(0, 10)
+  const priceListName  = (meta?.priceListName ?? job?.file_name ?? `Price List ${new Date().toISOString().slice(0, 10)}`).trim()
+  const rawCountry     = (meta?.targetCountry ?? '').trim()
+  const currency       = ((meta?.currency ?? 'USD').trim().toUpperCase() || 'USD')
+  const today          = new Date().toISOString().slice(0, 10)
+  const effectiveDate  = meta?.effectiveDate ?? today
 
   // Resolve country code
-  const countryCode = rawCountry.length === 2
+  const countryCode: string = rawCountry.length === 2
     ? rawCountry.toUpperCase()
-    : COUNTRY_NAME_TO_CODE[rawCountry.toLowerCase()] ?? null
+    : (COUNTRY_NAME_TO_CODE[rawCountry.toLowerCase()] ?? 'XX')
 
-  // Find site for this country (optional — used to link cost_set.site_id)
-  let siteId: string | null = null
-  if (countryCode) {
-    const { data: siteRows } = await db.from('sites')
-      .select('id')
-      .eq('organization_id', orgId)
-      .eq('country', countryCode)
-      .eq('status', 'active')
-      .limit(1)
-    siteId = siteRows?.[0]?.id ?? null
+  // ── Find or create country_price_list ─────────────────────────────────────
+  let priceListId: string
+
+  const { data: existingPl } = await db.from('country_price_lists')
+    .select('id')
+    .eq('organization_id', orgId)
+    .eq('country_code', countryCode)
+    .eq('name', priceListName)
+    .maybeSingle()
+
+  if (existingPl) {
+    priceListId = existingPl.id
+  } else {
+    const { data: newPl, error: plErr } = await db.from('country_price_lists').insert({
+      organization_id: orgId,
+      country_code:    countryCode,
+      name:            priceListName,
+      description:     rawCountry ? `Price list for ${rawCountry}` : null,
+      is_active:       true,
+      created_by:      userId,
+    }).select('id').single()
+
+    if (plErr || !newPl) {
+      result.errors.push({ row: 0, error: `Failed to create country price list: ${plErr?.message ?? 'unknown'}` })
+      return
+    }
+    priceListId = newPl.id
   }
 
-  // Create Cost Set for this price list
-  const costSetCode = `PL-${jobId.slice(0, 8).toUpperCase()}`
-  const { data: costSet, error: csErr } = await db.from('cost_sets').insert({
+  // ── Determine next version number ─────────────────────────────────────────
+  const { data: maxVerRow } = await db.from('price_list_versions')
+    .select('version_number')
+    .eq('price_list_id', priceListId)
+    .order('version_number', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const versionNumber = (maxVerRow?.version_number ?? 0) + 1
+
+  // Mark any previously active versions as superseded
+  await db.from('price_list_versions')
+    .update({ status: 'superseded' })
+    .eq('price_list_id', priceListId)
+    .eq('status', 'active')
+
+  // ── Create price_list_version ─────────────────────────────────────────────
+  const { data: plVersion, error: plvErr } = await db.from('price_list_versions').insert({
     organization_id: orgId,
-    code:            costSetCode,
-    name:            priceListName,
-    description:     rawCountry ? `Imported price list — ${rawCountry}` : 'Imported price list',
-    cost_set_type:   'price_list',
-    base_currency:   currency,
-    effective_from:  today,
-    is_active:       true,
-    is_frozen:       false,
-    site_id:         siteId,
-    notes:           `Auto-created from import job ${jobId}`,
-    status:          'draft',
-    created_by:      userId,
-    updated_by:      userId,
+    price_list_id:   priceListId,
+    version_number:  versionNumber,
+    effective_date:  effectiveDate,
+    imported_at:     new Date().toISOString(),
+    imported_by:     userId,
+    currency,
+    status:          'active',
+    import_job_id:   jobId,
   }).select('id').single()
 
-  if (csErr || !costSet) {
-    result.errors.push({ row: 0, error: `Failed to create Cost Set: ${csErr?.message ?? 'unknown'}` })
+  if (plvErr || !plVersion) {
+    result.errors.push({ row: 0, error: `Failed to create price list version: ${plvErr?.message ?? 'unknown'}` })
     return
   }
-  const costSetId: string = costSet.id
+  const versionId: string = plVersion.id
 
-  // Load SKU map
+  // ── Load SKU map ──────────────────────────────────────────────────────────
   const partNums = [...new Set(rows.map(r => String(r.mappedData['part_number'] ?? '').trim()).filter(Boolean))]
   const { data: skuRows } = await db.from('skus').select('id, part_number').eq('organization_id', orgId).in('part_number', partNums)
   const skuMap = new Map<string, string>()
   for (const s of skuRows ?? []) skuMap.set(s.part_number, s.id)
 
+  // ── Build quality metrics while processing rows ───────────────────────────
+  const seenPartNums  = new Map<string, number>()  // partNum → first rowNumber
+  let missingSkus     = 0
+  let missingPrices   = 0
+  let duplicateSkus   = 0
+  let currencyMismatches = 0
+  let rejectedRows    = 0
+
   const toInsert: Array<Record<string, unknown> & { _rowNumber: number }> = []
 
   for (const r of rows) {
-    const partNum  = String(r.mappedData['part_number'] ?? '').trim()
-    const skuId    = skuMap.get(partNum)
+    const partNum = String(r.mappedData['part_number'] ?? '').trim()
+    const skuId   = skuMap.get(partNum)
+
     if (!skuId) {
+      missingSkus++
       result.errors.push({ row: r.rowNumber, error: `Part number "${partNum}" not found in SKU master` })
       result.skipped++
+      rejectedRows++
       continue
     }
+
+    if (seenPartNums.has(partNum)) {
+      duplicateSkus++
+      result.errors.push({ row: r.rowNumber, error: `Duplicate part number "${partNum}" (first seen at row ${seenPartNums.get(partNum)})` })
+      result.skipped++
+      rejectedRows++
+      continue
+    }
+    seenPartNums.set(partNum, r.rowNumber)
 
     const rawPrice = r.mappedData['unit_price']
     const price    = Number(rawPrice)
     if (isNaN(price) || price < 0) {
-      result.errors.push({ row: r.rowNumber, error: `Invalid price "${rawPrice}"` })
+      missingPrices++
+      result.errors.push({ row: r.rowNumber, error: `Invalid or missing price "${rawPrice}"` })
       result.skipped++
+      rejectedRows++
       continue
     }
 
-    const lineCcy  = String(r.mappedData['currency'] ?? '').trim().toUpperCase()
-    const ccy      = lineCcy.length === 3 ? lineCcy : currency
+    const lineCcy = String(r.mappedData['currency'] ?? '').trim().toUpperCase()
+    const ccy     = lineCcy.length === 3 ? lineCcy : currency
+    if (lineCcy.length === 3 && lineCcy !== currency) currencyMismatches++
 
     toInsert.push({
-      organization_id: orgId,
-      cost_set_id:     costSetId,
-      item_type:       'material_price',
-      scope_type:      'sku',
-      scope_id:        skuId,
-      scope_code:      partNum,
-      sku_id:          skuId,
-      value:           price,
-      value_unit:      'currency_amount',
-      currency:        ccy,
-      applies_to:      'per_unit',
-      effective_from:  today,
-      is_active:       true,
-      source:          `price_list_import:${jobId}`,
-      created_by:      userId,
-      updated_by:      userId,
-      _rowNumber:      r.rowNumber,
+      organization_id:      orgId,
+      price_list_version_id: versionId,
+      sku_id:               skuId,
+      part_number:          partNum,
+      unit_price:           price,
+      currency:             ccy,
+      _rowNumber:           r.rowNumber,
     })
   }
 
   for (let i = 0; i < toInsert.length; i += DB_BATCH) {
     const batch = toInsert.slice(i, i + DB_BATCH)
     const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
-    const { error } = await db.from('cost_items').insert(insertBatch)
+    const { error } = await db.from('price_list_version_items').insert(insertBatch)
     if (error) {
-      for (const r of batch) result.errors.push({ row: r._rowNumber as number, error: error.message })
+      for (const r of batch) {
+        result.errors.push({ row: r._rowNumber as number, error: error.message })
+        rejectedRows++
+      }
     } else {
       result.committed += batch.length
     }
   }
+
+  const importedRows = result.committed
+  const metrics: PriceListQualityMetrics = {
+    totalRows:          rows.length,
+    importedRows,
+    rejectedRows,
+    duplicateSkus,
+    missingSkus,
+    missingPrices,
+    currencyMismatches,
+    priceListVersionId: versionId,
+    priceListName,
+    countryCode,
+    versionNumber,
+    effectiveDate,
+  }
+
+  // Persist metrics on the version record
+  await db.from('price_list_versions').update({
+    item_count:      importedRows,
+    quality_metrics: metrics,
+  }).eq('id', versionId)
+
+  result.qualityMetrics = metrics
 }

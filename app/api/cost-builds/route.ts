@@ -2,16 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { createServerSupabaseClient, createServiceSupabaseClient } from '@/backend/lib/supabase'
 
+// Only operational strategies may be used to create builds.
 const CreateSchema = z.object({
-  siteId:          z.string().uuid(),
-  name:            z.string().min(1).max(200),
-  description:     z.string().max(500).optional(),
-  defaultStrategy: z.enum([
-    'PRICE_LIST', 'LAST_PURCHASE', 'AVERAGE_PURCHASE', 'BOM_ROLLUP',
-    'MAKE_OR_BUY', 'MANUAL_OVERRIDE', 'STANDARD_COST',
-    'CONTRACT_PRICE', 'CUSTOMER_SPECIFIC_COST',
-  ]),
-  notes: z.string().max(500).optional(),
+  siteId:              z.string().uuid(),
+  name:                z.string().min(1).max(200),
+  description:         z.string().max(500).optional(),
+  defaultStrategy:     z.enum(['PRICE_LIST', 'BOM_ROLLUP']),
+  priceListVersionId:  z.string().uuid().optional(),  // pin a specific version; else auto-detects latest
+  notes:               z.string().max(500).optional(),
 })
 
 export async function GET(request: NextRequest) {
@@ -64,7 +62,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })
     }
 
-    const { siteId, name, description, defaultStrategy, notes } = parsed.data
+    const { siteId, name, description, defaultStrategy, priceListVersionId, notes } = parsed.data
 
     const svc = createServiceSupabaseClient()
     const svcDb = svc as any
@@ -72,13 +70,14 @@ export async function POST(request: NextRequest) {
     const { data: build, error } = await svcDb
       .from('site_cost_builds')
       .insert({
-        organization_id:  orgId,
-        site_id:          siteId,
+        organization_id:      orgId,
+        site_id:              siteId,
         name,
-        description:      description ?? null,
-        default_strategy: defaultStrategy,
-        notes:            notes ?? null,
-        created_by:       user.id,
+        description:          description ?? null,
+        default_strategy:     defaultStrategy,
+        price_list_version_id: priceListVersionId ?? null,
+        notes:                notes ?? null,
+        created_by:           user.id,
       })
       .select('id, name, default_strategy, status, created_at')
       .single()

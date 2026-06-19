@@ -56,8 +56,16 @@ interface ValidationSummary {
   sampleErrors: Array<{ row: number; errors: string[] }>
 }
 
+interface PriceListQualityMetrics {
+  totalRows: number; importedRows: number; rejectedRows: number
+  duplicateSkus: number; missingSkus: number; missingPrices: number; currencyMismatches: number
+  priceListVersionId: string; priceListName: string; countryCode: string
+  versionNumber: number; effectiveDate: string
+}
+
 interface CommitSummary {
   committed: number; skipped: number; errors: Array<{ row: number; error: string }>
+  qualityMetrics?: PriceListQualityMetrics | null
 }
 
 // ─── Field catalog helpers ────────────────────────────────────────────────────
@@ -114,7 +122,7 @@ function groupByCategory(fields: FieldDef[]) {
 // Rows 1-2 contain metadata, row 3 = headers, row 4+ = data.
 
 export interface DetectedPriceList {
-  priceListName: string; targetCountry: string; currency: string
+  priceListName: string; targetCountry: string; currency: string; effectiveDate?: string
 }
 
 function detectPriceListFormat(rawRows: unknown[][]): {
@@ -483,6 +491,7 @@ export default function ImportsPage() {
   const [error,             setError]             = useState<string | null>(null)
   const [showCustomModal,   setShowCustomModal]   = useState(false)
   const [detectedPriceList, setDetectedPriceList] = useState<DetectedPriceList | null>(null)
+  const [priceListEffDate,  setPriceListEffDate]  = useState<string>(new Date().toISOString().slice(0, 10))
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef     = useRef(false)
 
@@ -564,7 +573,7 @@ export default function ImportsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           importType: importType.type, fileName, mapping, totalRows: rows.length,
-          ...(detectedPriceList ? { priceListMeta: detectedPriceList } : {}),
+          ...(detectedPriceList ? { priceListMeta: { ...detectedPriceList, effectiveDate: priceListEffDate } } : {}),
         }),
       })
       const startData = await startRes.json()
@@ -596,7 +605,7 @@ export default function ImportsPage() {
       }
     } catch { setError('Upload failed. Please try again.') }
     finally { setUploading(false) }
-  }, [importType, rows, fileName, mapping, detectedPriceList])
+  }, [importType, rows, fileName, mapping, detectedPriceList, priceListEffDate])
 
   async function handleCommit() {
     if (!validation) return
@@ -620,6 +629,7 @@ export default function ImportsPage() {
     setMapping({}); setFields([]); setTemplates([]); setValidation(null); setCommitResult(null)
     setProgress(null); setSaveTemplate(false); setTemplateName(''); setError(null)
     setDetectedPriceList(null)
+    setPriceListEffDate(new Date().toISOString().slice(0, 10))
     abortRef.current = false
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -723,8 +733,17 @@ export default function ImportsPage() {
                   </div>
                 ))}
               </div>
-              <div style={{ fontSize: '12px', color: '#166534', marginTop: '8px' }}>
-                Row 3 was used as header. Columns auto-mapped using the standard field catalog. A Cost Set will be created on commit.
+              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#166534', whiteSpace: 'nowrap' }}>Effective Date *</label>
+                <input
+                  type="date"
+                  value={priceListEffDate}
+                  onChange={e => setPriceListEffDate(e.target.value)}
+                  style={{ fontSize: '13px', padding: '4px 8px', border: '1px solid #86EFAC', borderRadius: '4px', background: '#fff', color: '#14532d' }}
+                />
+                <span style={{ fontSize: '12px', color: '#166534' }}>
+                  Row 3 was used as header. Columns auto-mapped. A versioned price list will be created on commit.
+                </span>
               </div>
             </div>
           )}
@@ -922,6 +941,35 @@ export default function ImportsPage() {
               {commitResult.errors.length > 5 && <div style={{ fontSize: '12px', color: D.secondary, marginTop: '4px' }}>…and {fmtNum(commitResult.errors.length - 5)} more. See Audit Log.</div>}
             </div>
           )}
+
+          {/* Price list quality dashboard */}
+          {commitResult.qualityMetrics && (
+            <div style={{ textAlign: 'left', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', padding: '16px 20px', marginBottom: '24px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#166534', marginBottom: '12px' }}>
+                Price List Quality Dashboard — {commitResult.qualityMetrics.priceListName} ({commitResult.qualityMetrics.countryCode}) v{commitResult.qualityMetrics.versionNumber}
+              </div>
+              <div style={{ fontSize: '12px', color: '#166534', marginBottom: '12px' }}>
+                Effective date: {commitResult.qualityMetrics.effectiveDate}
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                {[
+                  { label: 'Total Rows',          value: fmtNum(commitResult.qualityMetrics.totalRows),          color: '#166534' },
+                  { label: 'Imported',             value: fmtNum(commitResult.qualityMetrics.importedRows),        color: D.success },
+                  { label: 'Rejected',             value: fmtNum(commitResult.qualityMetrics.rejectedRows),        color: commitResult.qualityMetrics.rejectedRows > 0 ? D.error : D.success },
+                  { label: 'Duplicate SKUs',       value: fmtNum(commitResult.qualityMetrics.duplicateSkus),       color: commitResult.qualityMetrics.duplicateSkus > 0 ? D.warning : D.success },
+                  { label: 'Missing in SKU Master',value: fmtNum(commitResult.qualityMetrics.missingSkus),         color: commitResult.qualityMetrics.missingSkus > 0 ? D.error : D.success },
+                  { label: 'Missing Prices',       value: fmtNum(commitResult.qualityMetrics.missingPrices),       color: commitResult.qualityMetrics.missingPrices > 0 ? D.error : D.success },
+                  { label: 'Currency Mismatches',  value: fmtNum(commitResult.qualityMetrics.currencyMismatches),  color: commitResult.qualityMetrics.currencyMismatches > 0 ? D.warning : D.success },
+                ].map(m => (
+                  <div key={m.label} style={{ background: '#fff', borderRadius: '6px', padding: '8px 12px' }}>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: m.color }}>{m.value}</div>
+                    <div style={{ fontSize: '11px', color: '#166534' }}>{m.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
             <button onClick={reset} style={{ fontSize: '14px', padding: '8px 24px', background: D.red, color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>New import</button>
             <a href="/audit" style={{ fontSize: '14px', padding: '8px 24px', border: `1px solid ${D.border}`, borderRadius: '6px', background: D.card, color: D.dark, textDecoration: 'none', display: 'inline-block' }}>View audit log</a>

@@ -140,9 +140,10 @@ export async function POST(request: NextRequest) {
     })
 
     return NextResponse.json({
-      committed: commitResult.committed,
-      skipped:   commitResult.skipped,
-      errors:    commitResult.errors,
+      committed:      commitResult.committed,
+      skipped:        commitResult.skipped,
+      errors:         commitResult.errors,
+      qualityMetrics: commitResult.qualityMetrics ?? null,
     })
   } catch (err) {
     console.error('Commit route error:', err)

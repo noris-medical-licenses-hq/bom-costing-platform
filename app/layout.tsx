@@ -7,14 +7,15 @@ export const metadata: Metadata = {
 }
 
 const NAV_LINKS = [
-  { href: '/',              label: 'Dashboard'    },
-  { href: '/boms',          label: 'BOMs'         },
-  { href: '/cost-builds',   label: 'Cost Builds'  },
-  { href: '/inventory',     label: 'Inventory'    },
-  { href: '/sites',         label: 'Sites'        },
-  { href: '/validation',    label: 'Validation'   },
-  { href: '/imports',       label: 'Imports'      },
-  { href: '/audit',         label: 'Audit'        },
+  { href: '/',                 label: 'Dashboard'        },
+  { href: '/boms',             label: 'BOMs'             },
+  { href: '/cost-builds',      label: 'Cost Builds'      },
+  { href: '/inventory',        label: 'Inventory'        },
+  { href: '/sites',            label: 'Sites'            },
+  { href: '/validation',       label: 'Validation'       },
+  { href: '/strategy-status',  label: 'Strategy Status'  },
+  { href: '/imports',          label: 'Imports'          },
+  { href: '/audit',            label: 'Audit'            },
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
