@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { useRole } from '../hooks/useRole'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -208,6 +209,7 @@ function DetailModal({ supplier, onClose, onChanged }: { supplier: Supplier; onC
 }
 
 export default function SuppliersPage() {
+  const { isViewer }                = useRole()
   const [suppliers, setSuppliers]   = useState<Supplier[]>([])
   const [loading, setLoading]       = useState(true)
   const [showCreate, setShowCreate] = useState(false)
@@ -237,10 +239,12 @@ export default function SuppliersPage() {
           <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, margin: 0 }}>Suppliers</h1>
           <p style={{ fontSize: '13px', color: D.secondary, margin: '4px 0 0' }}>Manage supplier master data</p>
         </div>
-        <button onClick={() => setShowCreate(true)}
-          style={{ background: D.teal, color: '#fff', border: 'none', borderRadius: '7px', padding: '9px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
-          + Add Supplier
-        </button>
+        {!isViewer && (
+          <button onClick={() => setShowCreate(true)}
+            style={{ background: D.teal, color: '#fff', border: 'none', borderRadius: '7px', padding: '9px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+            + Add Supplier
+          </button>
+        )}
       </div>
 
       {showCreate && <CreateModal onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); load() }} />}

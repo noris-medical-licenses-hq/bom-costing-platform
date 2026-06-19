@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { useRole } from '../hooks/useRole'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -190,6 +191,7 @@ function CostCalculator({ bomId, skuName }: { bomId: string; skuName: string }) 
 }
 
 export default function BomPage() {
+  const { canApprove }            = useRole()
   const [versions, setVersions]   = useState<BomVersion[]>([])
   const [loading, setLoading]     = useState(true)
   const [search, setSearch]       = useState('')
@@ -346,7 +348,7 @@ export default function BomPage() {
                         </td>
                         <td style={{ padding: '8px 10px' }}>
                           <div style={{ display: 'flex', gap: '6px' }}>
-                            {(v.status === 'draft' || v.status === 'under_review') && (
+                            {canApprove && (v.status === 'draft' || v.status === 'under_review') && (
                               <>
                                 <button onClick={() => setApproving(v)}
                                   style={{ fontSize: '12px', color: D.success, background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '5px', padding: '4px 10px', cursor: 'pointer', fontWeight: 600 }}>

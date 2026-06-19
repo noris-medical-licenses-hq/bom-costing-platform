@@ -20,6 +20,7 @@ type Site      = { id: string; name: string; code: string; country: string | nul
 type BestBuild = { id: string; name: string; status: string; site_id: string; cost_sets: { id: string; name: string; base_currency: string } | null }
 type LatestVal = { id: string; snapshot_id: string; status: string; total_value: number | null; valuation_currency: string; created_at: string }
 type CostSet   = { id: string; name: string; base_currency: string }
+type SiteBuild = { id: string; name: string; status: string; cost_sets: { id: string; name: string; base_currency: string } | null }
 
 type EnrichedSnapshot = {
   id: string; snapshot_name: string; snapshot_date: string; snapshot_type: string
@@ -202,28 +203,51 @@ function WizardModal({ state, onConfirm, onClose, onRun, overrideCurrency, setOv
 
 export default function InventoryPage() {
   const [snapshots,  setSnapshots]  = useState<EnrichedSnapshot[]>([])
-  const [costSets,   setCostSets]   = useState<CostSet[]>([])
+  const [sites,      setSites]      = useState<Site[]>([])
+  const [siteBuilds, setSiteBuilds] = useState<SiteBuild[]>([])
   const [loading,    setLoading]    = useState(true)
   const [showCreate, setShowCreate] = useState(false)
   const [formError,  setFormError]  = useState<string | null>(null)
   const [form, setForm] = useState({
     snapshot_name: '', snapshot_date: new Date().toISOString().slice(0, 10),
-    snapshot_type: 'full', cost_set_id: '', base_currency: 'EUR',
+    snapshot_type: 'full', scope_site_id: '', base_currency: 'EUR',
   })
 
   // Wizard state
   const [wizard, setWizard] = useState<WizardState>({ phase: 'idle' })
   const [overrideCurrency, setOverrideCurrency] = useState('EUR')
 
+  // Resolve the best approved/locked/complete build for the selected site
+  const PRIO: Record<string, number> = { approved: 3, locked: 2, complete: 1 }
+  function bestBuildForSite(siteId: string): SiteBuild | null {
+    return siteBuilds
+      .filter(b => (b as any).site_id === siteId && PRIO[(b as any).status] != null)
+      .sort((a, b) => (PRIO[(b as any).status] ?? 0) - (PRIO[(a as any).status] ?? 0))[0] ?? null
+  }
+
+  const selectedSiteBuild = form.scope_site_id ? bestBuildForSite(form.scope_site_id) : null
+
+  async function loadSiteBuilds(siteId: string) {
+    const res  = await fetch(`/api/cost-builds?siteId=${siteId}`)
+    const json = await res.json()
+    setSiteBuilds(json.data ?? [])
+  }
+
+  function handleSiteChange(siteId: string) {
+    setForm(f => ({ ...f, scope_site_id: siteId }))
+    setSiteBuilds([])
+    if (siteId) loadSiteBuilds(siteId)
+  }
+
   const load = useCallback(async () => {
     setLoading(true)
-    const [sRes, csRes] = await Promise.all([
+    const [sRes, sitesRes] = await Promise.all([
       fetch('/api/inventory?enriched=true'),
-      fetch('/api/cost-sets'),
+      fetch('/api/sites'),
     ])
-    const [sJson, csJson] = await Promise.all([sRes.json(), csRes.json()])
+    const [sJson, sitesJson] = await Promise.all([sRes.json(), sitesRes.json()])
     setSnapshots(sJson.data ?? [])
-    setCostSets(csJson.data ?? [])
+    setSites(sitesJson.data ?? [])
     setLoading(false)
   }, [])
 
@@ -231,9 +255,22 @@ export default function InventoryPage() {
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault(); setFormError(null)
+    const build = form.scope_site_id ? bestBuildForSite(form.scope_site_id) : null
+    if (!build?.cost_sets?.id) {
+      setFormError('No approved Cost Build found for this site. Create one first under Cost Builds.')
+      return
+    }
+    const payload = {
+      snapshot_name:     form.snapshot_name,
+      snapshot_date:     form.snapshot_date,
+      snapshot_type:     form.snapshot_type,
+      cost_set_id:       build.cost_sets.id,
+      base_currency:     build.cost_sets.base_currency,
+      scope_site_id:     form.scope_site_id || null,
+    }
     const res = await fetch('/api/inventory', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
+      body: JSON.stringify(payload),
     })
     const json = await res.json()
     if (res.ok) { setShowCreate(false); load() }
@@ -329,7 +366,8 @@ export default function InventoryPage() {
       {/* Create form */}
       {showCreate && (
         <form onSubmit={handleCreate} style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '8px', padding: '24px', marginBottom: '24px' }}>
-          <h3 style={{ margin: '0 0 20px', fontSize: '15px', fontWeight: 700, color: D.dark }}>New Inventory Snapshot</h3>
+          <h3 style={{ margin: '0 0 4px', fontSize: '15px', fontWeight: 700, color: D.dark }}>New Inventory Snapshot</h3>
+          <p style={{ margin: '0 0 20px', fontSize: '12px', color: D.secondary }}>Select a site — the Cost Build and currency are resolved automatically.</p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '14px', marginBottom: '14px' }}>
             <div>
               <label style={labelStyle}>Snapshot Name *</label>
@@ -346,18 +384,36 @@ export default function InventoryPage() {
               </select>
             </div>
             <div>
-              <label style={labelStyle}>Cost Set *</label>
-              <select value={form.cost_set_id} onChange={e => setForm(f => ({ ...f, cost_set_id: e.target.value }))} required style={iStyle}>
-                <option value="">— select —</option>
-                {costSets.map(cs => <option key={cs.id} value={cs.id}>{cs.name}</option>)}
+              <label style={labelStyle}>Site *</label>
+              <select value={form.scope_site_id} onChange={e => handleSiteChange(e.target.value)} required style={iStyle}>
+                <option value="">— select site —</option>
+                {sites.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
               </select>
             </div>
-            <div>
-              <label style={labelStyle}>Base Currency</label>
-              <input value={form.base_currency} onChange={e => setForm(f => ({ ...f, base_currency: e.target.value.toUpperCase() }))} maxLength={3} style={iStyle} placeholder="EUR" />
+            <div style={{ gridColumn: 'span 2' }}>
+              <label style={labelStyle}>Auto-resolved Cost Build</label>
+              {!form.scope_site_id ? (
+                <div style={{ padding: '8px 10px', border: `1px solid ${D.border}`, borderRadius: '6px', fontSize: '13px', color: D.secondary, background: D.bg }}>Select a site first</div>
+              ) : selectedSiteBuild ? (
+                <div style={{ padding: '8px 12px', border: '1px solid #86EFAC', borderRadius: '6px', fontSize: '13px', background: '#F0FDF4', color: '#15803d' }}>
+                  <strong>{selectedSiteBuild.name}</strong>
+                  <span style={{ marginLeft: '8px', color: '#166534', fontSize: '12px' }}>
+                    {selectedSiteBuild.cost_sets?.name} · {selectedSiteBuild.cost_sets?.base_currency} · {selectedSiteBuild.status}
+                  </span>
+                </div>
+              ) : (
+                <div style={{ padding: '8px 12px', border: `1px solid #FDE68A`, borderRadius: '6px', fontSize: '13px', background: '#FFFBEB', color: '#92400E' }}>
+                  No approved Cost Build for this site —{' '}
+                  <a href="/cost-builds" style={{ color: D.red, fontWeight: 600 }}>create one first</a>
+                </div>
+              )}
             </div>
           </div>
-          <button type="submit" style={{ background: D.red, color: '#fff', border: 'none', padding: '8px 24px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}>
+          <button
+            type="submit"
+            disabled={!selectedSiteBuild}
+            style={{ background: selectedSiteBuild ? D.red : D.border, color: '#fff', border: 'none', padding: '8px 24px', borderRadius: '6px', cursor: selectedSiteBuild ? 'pointer' : 'not-allowed', fontSize: '14px', fontWeight: 600 }}
+          >
             Create Snapshot
           </button>
         </form>

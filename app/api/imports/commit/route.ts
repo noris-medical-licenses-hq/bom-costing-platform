@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
     // Audit log
     await svcDb.from('audit_log').insert({
       organization_id: orgId,
-      event_type:      'data_insert',
+      event_type:      'import_committed',
       event_category:  'data',
       table_name:      'import_jobs',
       record_id:       jobId,

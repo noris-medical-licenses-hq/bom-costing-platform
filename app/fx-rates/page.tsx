@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { useRole } from '../hooks/useRole'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -97,6 +98,7 @@ function AddRateModal({ onClose, onDone }: { onClose: () => void; onDone: () => 
 }
 
 export default function FxRatesPage() {
+  const { isViewer }              = useRole()
   const [rates, setRates]         = useState<FxRate[]>([])
   const [loading, setLoading]     = useState(true)
   const [showAdd, setShowAdd]     = useState(false)
@@ -136,10 +138,12 @@ export default function FxRatesPage() {
           <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, margin: 0 }}>FX Rates</h1>
           <p style={{ fontSize: '13px', color: D.secondary, margin: '4px 0 0' }}>Corporate exchange rates used in multi-currency inventory valuations</p>
         </div>
-        <button onClick={() => setShowAdd(true)}
-          style={{ background: D.blue, color: '#fff', border: 'none', borderRadius: '7px', padding: '9px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
-          + Add Rate
-        </button>
+        {!isViewer && (
+          <button onClick={() => setShowAdd(true)}
+            style={{ background: D.blue, color: '#fff', border: 'none', borderRadius: '7px', padding: '9px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+            + Add Rate
+          </button>
+        )}
       </div>
 
       {showAdd && <AddRateModal onClose={() => setShowAdd(false)} onDone={() => { setShowAdd(false); load() }} />}
@@ -198,10 +202,12 @@ export default function FxRatesPage() {
                     <td style={{ padding: '10px 16px', color: D.secondary }}>{r.effective_date}</td>
                     <td style={{ padding: '10px 16px', color: D.secondary, fontSize: '12px' }}>{r.source_label ?? '—'}</td>
                     <td style={{ padding: '10px 16px' }}>
-                      <button onClick={() => setDeleteId(r.id)}
-                        style={{ fontSize: '12px', color: D.error, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '5px', padding: '4px 10px', cursor: 'pointer' }}>
-                        Delete
-                      </button>
+                      {!isViewer && (
+                        <button onClick={() => setDeleteId(r.id)}
+                          style={{ fontSize: '12px', color: D.error, background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: '5px', padding: '4px 10px', cursor: 'pointer' }}>
+                          Delete
+                        </button>
+                      )}
                     </td>
                   </tr>
                 ))}

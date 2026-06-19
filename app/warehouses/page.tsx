@@ -1,5 +1,6 @@
 'use client'
 import { useState, useEffect, useCallback } from 'react'
+import { useRole } from '../hooks/useRole'
 
 const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
@@ -148,6 +149,7 @@ function EditModal({ wh, sites, onClose, onDone }: { wh: Warehouse; sites: Site[
 }
 
 export default function WarehousesPage() {
+  const { isViewer }                = useRole()
   const [warehouses, setWarehouses] = useState<Warehouse[]>([])
   const [sites, setSites]           = useState<Site[]>([])
   const [loading, setLoading]       = useState(true)
@@ -195,10 +197,12 @@ export default function WarehousesPage() {
           <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, margin: 0 }}>Warehouses</h1>
           <p style={{ fontSize: '13px', color: D.secondary, margin: '4px 0 0' }}>Manage storage zones within each site</p>
         </div>
-        <button onClick={() => setShowCreate(true)} disabled={sites.length === 0}
-          style={{ background: D.teal, color: '#fff', border: 'none', borderRadius: '7px', padding: '9px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
-          + Create Warehouse
-        </button>
+        {!isViewer && (
+          <button onClick={() => setShowCreate(true)} disabled={sites.length === 0}
+            style={{ background: D.teal, color: '#fff', border: 'none', borderRadius: '7px', padding: '9px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+            + Create Warehouse
+          </button>
+        )}
       </div>
 
       {showCreate && <CreateModal sites={sites} onClose={() => setShowCreate(false)} onDone={() => { setShowCreate(false); load() }} />}
@@ -260,14 +264,18 @@ export default function WarehousesPage() {
                   </td>
                   <td style={{ padding: '12px 16px' }}>
                     <div style={{ display: 'flex', gap: '8px' }}>
-                      <button onClick={() => setEditing(wh)}
-                        style={{ fontSize: '12px', color: D.dark, background: D.bg, border: `1px solid ${D.border}`, borderRadius: '5px', padding: '4px 10px', cursor: 'pointer' }}>
-                        Edit
-                      </button>
-                      <button onClick={() => toggleActive(wh)} disabled={actionLoading === wh.id}
-                        style={{ fontSize: '12px', color: wh.is_active ? D.warning : D.success, background: wh.is_active ? '#FFFBEB' : '#F0FDF4', border: `1px solid ${wh.is_active ? '#FDE68A' : '#86EFAC'}`, borderRadius: '5px', padding: '4px 10px', cursor: 'pointer' }}>
-                        {actionLoading === wh.id ? '…' : wh.is_active ? 'Archive' : 'Restore'}
-                      </button>
+                      {!isViewer && (
+                        <>
+                          <button onClick={() => setEditing(wh)}
+                            style={{ fontSize: '12px', color: D.dark, background: D.bg, border: `1px solid ${D.border}`, borderRadius: '5px', padding: '4px 10px', cursor: 'pointer' }}>
+                            Edit
+                          </button>
+                          <button onClick={() => toggleActive(wh)} disabled={actionLoading === wh.id}
+                            style={{ fontSize: '12px', color: wh.is_active ? D.warning : D.success, background: wh.is_active ? '#FFFBEB' : '#F0FDF4', border: `1px solid ${wh.is_active ? '#FDE68A' : '#86EFAC'}`, borderRadius: '5px', padding: '4px 10px', cursor: 'pointer' }}>
+                            {actionLoading === wh.id ? '…' : wh.is_active ? 'Archive' : 'Restore'}
+                          </button>
+                        </>
+                      )}
                     </div>
                   </td>
                 </tr>

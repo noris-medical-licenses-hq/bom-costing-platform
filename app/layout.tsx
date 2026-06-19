@@ -1,6 +1,7 @@
 import type { Metadata } from 'next'
 import { NavUser } from './components/NavUser'
 import { GlobalSearch } from './components/GlobalSearch'
+import { AdminNavLink } from './components/AdminNavLink'
 
 export const metadata: Metadata = {
   title: 'BOM Costing Platform — Noris Medical',
@@ -19,7 +20,6 @@ const NAV_LINKS = [
   { href: '/suppliers',     label: 'Suppliers'    },
   { href: '/fx-rates',      label: 'FX Rates'     },
   { href: '/audit',         label: 'Audit'        },
-  { href: '/admin',         label: 'Admin'        },
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -42,6 +42,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               ))}
             </nav>
 
+            <AdminNavLink />
             <GlobalSearch />
             <NavUser />
           </div>
