@@ -1,14 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/backend/lib/supabase'
 
+const PAGE_SIZE = 500
+
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
     const client = await createServerSupabaseClient()
     const { data: { user } } = await client.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const page     = Math.max(1, parseInt(request.nextUrl.searchParams.get('page')     ?? '1', 10))
+    const pageSize = Math.min(PAGE_SIZE, Math.max(1, parseInt(request.nextUrl.searchParams.get('pageSize') ?? String(PAGE_SIZE), 10)))
+    const offset   = (page - 1) * pageSize
 
     const db = client as any
     const { data: report, error: reportErr } = await db
@@ -27,7 +33,7 @@ export async function GET(
       return NextResponse.json({ error: 'Report not found' }, { status: 404 })
     }
 
-    const [fxResult, wfResult, linesResult] = await Promise.all([
+    const [fxResult, wfResult, linesResult, linesTotalResult] = await Promise.all([
       db.from('valuation_report_exchange_rates')
         .select('from_currency, to_currency, rate, source, effective_date')
         .eq('report_id', params.id)
@@ -47,15 +53,26 @@ export async function GET(
         `)
         .eq('report_id', params.id)
         .order('line_total_valuation_currency', { ascending: false })
-        .limit(200),
+        .range(offset, offset + pageSize - 1),
+
+      db.from('valuation_report_lines')
+        .select('id', { count: 'exact', head: true })
+        .eq('report_id', params.id),
     ])
+
+    const linesTotal = linesTotalResult.count ?? 0
+    const totalPages = Math.max(1, Math.ceil(linesTotal / pageSize))
 
     return NextResponse.json({
       data: {
         ...report,
-        exchangeRates:      fxResult.data ?? [],
-        warehouseFilters:   wfResult.data ?? [],
-        lines:              linesResult.data ?? [],
+        exchangeRates:    fxResult.data ?? [],
+        warehouseFilters: wfResult.data ?? [],
+        lines:            linesResult.data ?? [],
+        linesTotal,
+        linesPage:        page,
+        linesPageSize:    pageSize,
+        linesTotalPages:  totalPages,
       },
     })
   } catch (err) {

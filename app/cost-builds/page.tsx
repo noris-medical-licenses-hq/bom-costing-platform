@@ -63,7 +63,7 @@ export default function CostBuildsPage() {
   const [loading,      setLoading]      = useState(true)
   const [showCreate,   setShowCreate]   = useState(false)
   const [selectedId,   setSelectedId]   = useState<string | null>(null)
-  const [buildDetail,  setBuildDetail]  = useState<{ build: Build; lines: BuildLine[] } | null>(null)
+  const [buildDetail,  setBuildDetail]  = useState<{ build: Build; lines: BuildLine[]; zeroCostCount: number } | null>(null)
   const [loadingLines, setLoadingLines] = useState(false)
   const [running,      setRunning]      = useState(false)
   const [actioning,    setActioning]    = useState(false)
@@ -95,7 +95,7 @@ export default function CostBuildsPage() {
     const res = await fetch(`/api/cost-builds/${buildId}`)
     const json = await res.json()
     setLoadingLines(false)
-    if (res.ok) setBuildDetail({ build: json.data, lines: json.lines ?? [] })
+    if (res.ok) setBuildDetail({ build: json.data, lines: json.lines ?? [], zeroCostCount: json.zeroCostCount ?? 0 })
     else setError(json.error)
   }
 
@@ -308,6 +308,7 @@ export default function CostBuildsPage() {
               <BuildDetail
                 build={buildDetail.build}
                 lines={buildDetail.lines}
+                zeroCostCount={buildDetail.zeroCostCount}
                 running={running}
                 actioning={actioning}
                 onRun={() => runBuild(buildDetail.build.id)}
@@ -327,9 +328,9 @@ export default function CostBuildsPage() {
 // ─── Build Detail Panel ───────────────────────────────────────────────────────
 
 function BuildDetail({
-  build, lines, running, actioning, onRun, onApprove, onLock, onClose, error,
+  build, lines, zeroCostCount, running, actioning, onRun, onApprove, onLock, onClose, error,
 }: {
-  build: Build; lines: BuildLine[]; running: boolean; actioning: boolean
+  build: Build; lines: BuildLine[]; zeroCostCount: number; running: boolean; actioning: boolean
   onRun: () => void; onApprove: () => void; onLock: () => void
   onClose: () => void; error: string | null
 }) {
@@ -366,12 +367,13 @@ function BuildDetail({
       </div>
 
       {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0', borderBottom: `1px solid ${D.border}` }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '0', borderBottom: `1px solid ${D.border}` }}>
         {[
-          { label: 'Status',     value: build.status.toUpperCase(), color: STATUS_COLOR[build.status] ?? D.secondary },
+          { label: 'Status',      value: build.status.toUpperCase(), color: STATUS_COLOR[build.status] ?? D.secondary },
           { label: 'SKUs costed', value: (build.line_count).toLocaleString(), color: D.dark },
-          { label: 'Errors',     value: (build.error_count).toLocaleString(), color: build.error_count > 0 ? D.error : D.secondary },
-          { label: 'Built',      value: build.built_at ? fmtDate(build.built_at) : '—', color: D.secondary },
+          { label: 'Zero-cost',   value: zeroCostCount.toLocaleString(), color: zeroCostCount > 0 ? D.warning : D.secondary },
+          { label: 'Errors',      value: (build.error_count).toLocaleString(), color: build.error_count > 0 ? D.error : D.secondary },
+          { label: 'Built',       value: build.built_at ? fmtDate(build.built_at) : '—', color: D.secondary },
         ].map(s => (
           <div key={s.label} style={{ padding: '12px 16px', borderRight: `1px solid ${D.border}` }}>
             <div style={{ fontSize: '18px', fontWeight: 700, color: s.color }}>{s.value}</div>

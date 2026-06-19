@@ -33,8 +33,8 @@ export async function POST(
     }
 
     const { buildId, currency, scenario } = parsed.data
-    const db   = client as any
-    const svc  = createServiceSupabaseClient()
+    const db    = client as any
+    const svc   = createServiceSupabaseClient()
     const svcDb = svc as any
 
     // Resolve cost_set_id from the cost build
@@ -53,6 +53,29 @@ export async function POST(
     const costSetId: string | null = (build.cost_sets as any)?.id ?? build.cost_set_id ?? null
     if (!costSetId) {
       return NextResponse.json({ error: 'Cost Build has no frozen Cost Set. Run the build first.' }, { status: 400 })
+    }
+
+    // FX pre-check: verify a rate exists before creating any DB records
+    const baseCurrency: string = (build.cost_sets as any)?.base_currency ?? ''
+    if (baseCurrency && baseCurrency !== currency) {
+      const { data: fxRate } = await db
+        .from('corporate_exchange_rates')
+        .select('id')
+        .eq('organization_id', orgId)
+        .eq('from_currency', baseCurrency)
+        .eq('to_currency', currency)
+        .order('effective_date', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+
+      if (!fxRate) {
+        return NextResponse.json({
+          error:        'FX_RATE_MISSING',
+          fromCurrency: baseCurrency,
+          toCurrency:   currency,
+          message:      `No exchange rate found from ${baseCurrency} to ${currency}. Add one in FX Rates before running this valuation.`,
+        }, { status: 400 })
+      }
     }
 
     // Create the valuation report record
@@ -80,8 +103,14 @@ export async function POST(
 
     const reportId: string = report.id
 
-    // Run valuation engine
-    const result = await runValuationReport(reportId, svc)
+    // Run valuation engine — clean up the draft on failure so no orphaned records remain
+    let result: Awaited<ReturnType<typeof runValuationReport>>
+    try {
+      result = await runValuationReport(reportId, svc)
+    } catch (engineErr) {
+      await svcDb.from('valuation_reports').update({ status: 'failed' }).eq('id', reportId)
+      throw engineErr
+    }
 
     // Audit
     await svcDb.from('audit_log').insert({

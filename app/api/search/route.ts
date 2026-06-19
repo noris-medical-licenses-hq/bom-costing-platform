@@ -78,14 +78,14 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Snapshots
+    // Snapshots — deep-link to /inventory/{id} (detail page exists)
     for (const s of snapshots.data ?? []) {
       results.push({
         type:  'Snapshot',
         id:    s.id,
         label: s.snapshot_name,
         sub:   `${s.snapshot_date} · ${s.status}`,
-        href:  `/inventory`,
+        href:  `/inventory/${s.id}`,
       })
     }
 

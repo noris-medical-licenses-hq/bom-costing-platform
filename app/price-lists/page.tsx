@@ -33,11 +33,12 @@ const COUNTRY_NAMES: Record<string, string> = {
 }
 
 function ItemsPanel({ versionId, currency }: { versionId: string; currency: string }) {
-  const [items, setItems]     = useState<PriceItem[]>([])
-  const [total, setTotal]     = useState(0)
-  const [search, setSearch]   = useState('')
-  const [offset, setOffset]   = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [items, setItems]           = useState<PriceItem[]>([])
+  const [total, setTotal]           = useState(0)
+  const [nullSkuCount, setNullSku]  = useState(0)
+  const [search, setSearch]         = useState('')
+  const [offset, setOffset]         = useState(0)
+  const [loading, setLoading]       = useState(true)
   const PAGE = 100
 
   const load = useCallback(async (q: string, off: number) => {
@@ -48,6 +49,7 @@ function ItemsPanel({ versionId, currency }: { versionId: string; currency: stri
     setLoading(false)
     setItems(json.data ?? [])
     setTotal(json.total ?? 0)
+    setNullSku(json.nullSkuCount ?? 0)
   }, [versionId])
 
   useEffect(() => { load('', 0) }, [load])
@@ -64,7 +66,12 @@ function ItemsPanel({ versionId, currency }: { versionId: string; currency: stri
           placeholder="Filter by part number…" value={search}
           onChange={e => doSearch(e.target.value)}
         />
-        <span style={{ fontSize: '12px', color: D.secondary }}>{total.toLocaleString()} items</span>
+        <span style={{ fontSize: '12px', color: D.secondary }}>{total.toLocaleString()} items{nullSkuCount > 0 ? ` · ` : ''}</span>
+        {nullSkuCount > 0 && (
+          <span style={{ fontSize: '12px', color: D.error, background: '#FEF2F2', border: '1px solid #FECACA', padding: '2px 8px', borderRadius: '10px' }}>
+            {nullSkuCount} unmatched SKUs
+          </span>
+        )}
         {total > PAGE && (
           <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
             <button onClick={() => { const o = Math.max(0, offset - PAGE); setOffset(o); load(search, o) }}

@@ -25,10 +25,21 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
 
     if (q) query = query.ilike('part_number', `%${q}%`)
 
-    const { data, error, count } = await query
+    const [{ data, error, count }, nullSkuRes] = await Promise.all([
+      query,
+      db.from('price_list_version_items')
+        .select('id', { count: 'exact', head: true })
+        .eq('price_list_version_id', params.id)
+        .is('sku_id', null),
+    ])
+
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-    return NextResponse.json({ data: data ?? [], total: count ?? 0 })
+    return NextResponse.json({
+      data:         data ?? [],
+      total:        count ?? 0,
+      nullSkuCount: nullSkuRes.count ?? 0,
+    })
   } catch (err) {
     console.error('[GET /api/price-lists/[id]/items]', err)
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 })

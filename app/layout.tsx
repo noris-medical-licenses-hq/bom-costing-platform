@@ -19,6 +19,8 @@ const NAV_LINKS = [
   { href: '/warehouses',    label: 'Warehouses'   },
   { href: '/suppliers',     label: 'Suppliers'    },
   { href: '/fx-rates',      label: 'FX Rates'     },
+  { href: '/skus',          label: 'SKUs'         },
+  { href: '/traces',        label: 'Traces'       },
   { href: '/audit',         label: 'Audit'        },
 ]
 

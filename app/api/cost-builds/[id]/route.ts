@@ -12,7 +12,7 @@ export async function GET(
 
     const db = client as any
 
-    const [buildRes, linesRes] = await Promise.all([
+    const [buildRes, linesRes, zeroCostRes] = await Promise.all([
       db.from('site_cost_builds')
         .select(`
           id, name, description, default_strategy, status,
@@ -35,6 +35,11 @@ export async function GET(
         .order('item_cost_type')
         .order('resolved_cost', { ascending: false })
         .limit(2000),
+
+      db.from('site_cost_build_lines')
+        .select('id', { count: 'exact', head: true })
+        .eq('site_cost_build_id', params.id)
+        .eq('resolved_cost', 0),
     ])
 
     if (buildRes.error) {
@@ -45,8 +50,9 @@ export async function GET(
     }
 
     return NextResponse.json({
-      data:  buildRes.data,
-      lines: linesRes.data ?? [],
+      data:          buildRes.data,
+      lines:         linesRes.data ?? [],
+      zeroCostCount: zeroCostRes.count ?? 0,
     })
   } catch (err) {
     console.error('[GET /api/cost-builds/[id]]', err)

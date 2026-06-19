@@ -50,22 +50,46 @@ type Report = {
     skus: { part_number: string; name: string }
     warehouses: { code: string; name: string } | null
   }>
+  linesTotal:      number
+  linesPage:       number
+  linesPageSize:   number
+  linesTotalPages: number
 }
 
 export default function ValuationReportDetailPage() {
   const params = useParams()
   const id = params.id as string
-  const [report, setReport] = useState<Report | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [report, setReport]       = useState<Report | null>(null)
+  const [loading, setLoading]     = useState(true)
+  const [linesLoading, setLinesLoading] = useState(false)
+  const [linesPage, setLinesPage] = useState(1)
+  const [error, setError]         = useState<string | null>(null)
   const [actionLoading, setActionLoading] = useState(false)
+
+  const loadLines = useCallback(async (page: number) => {
+    if (!report) return
+    setLinesLoading(true)
+    const res  = await fetch(`/api/valuation-reports/${id}?page=${page}&pageSize=500`)
+    const json = await res.json()
+    setLinesLoading(false)
+    if (res.ok) {
+      setReport(prev => prev ? {
+        ...prev,
+        lines:           json.data.lines,
+        linesTotal:      json.data.linesTotal,
+        linesPage:       json.data.linesPage,
+        linesTotalPages: json.data.linesTotalPages,
+      } : null)
+      setLinesPage(page)
+    }
+  }, [id, report])
 
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await fetch(`/api/valuation-reports/${id}`)
+    const res = await fetch(`/api/valuation-reports/${id}?page=1&pageSize=500`)
     const json = await res.json()
     setLoading(false)
-    if (res.ok) setReport(json.data)
+    if (res.ok) { setReport(json.data); setLinesPage(1) }
     else setError(json.error)
   }, [id])
 
@@ -225,16 +249,39 @@ export default function ValuationReportDetailPage() {
 
       {/* Lines Table */}
       <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '8px', overflow: 'hidden' }}>
-        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
           <h3 style={{ fontSize: '14px', fontWeight: 700, margin: 0, color: D.dark }}>
-            Line Items {report.line_count != null && report.line_count > 200 ? `(showing top 200 of ${report.line_count})` : `(${report.lines.length})`}
-          </h3>
-          {(report.missing_cost_count ?? 0) > 0 && (
-            <span style={{ fontSize: '12px', color: D.red, background: '#fef2f2', border: `1px solid #fecaca`, padding: '4px 10px', borderRadius: '12px' }}>
-              {report.missing_cost_count} missing costs
+            Line Items
+            <span style={{ fontWeight: 400, color: D.secondary, marginLeft: '6px', fontSize: '13px' }}>
+              ({(report.linesTotal ?? report.line_count ?? 0).toLocaleString()} total
+              {(report.linesTotalPages ?? 1) > 1 && ` · page ${linesPage} of ${report.linesTotalPages}`})
             </span>
-          )}
+          </h3>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {(report.missing_cost_count ?? 0) > 0 && (
+              <span style={{ fontSize: '12px', color: D.red, background: '#fef2f2', border: `1px solid #fecaca`, padding: '4px 10px', borderRadius: '12px' }}>
+                {report.missing_cost_count} missing costs
+              </span>
+            )}
+            {(report.linesTotalPages ?? 1) > 1 && (
+              <>
+                <button
+                  onClick={() => loadLines(linesPage - 1)}
+                  disabled={linesPage <= 1 || linesLoading}
+                  style={{ padding: '4px 10px', fontSize: '12px', border: `1px solid ${D.border}`, borderRadius: '5px', background: D.bg, cursor: 'pointer', opacity: linesPage <= 1 ? 0.5 : 1 }}
+                >← Prev</button>
+                <button
+                  onClick={() => loadLines(linesPage + 1)}
+                  disabled={linesPage >= (report.linesTotalPages ?? 1) || linesLoading}
+                  style={{ padding: '4px 10px', fontSize: '12px', border: `1px solid ${D.border}`, borderRadius: '5px', background: D.bg, cursor: 'pointer', opacity: linesPage >= (report.linesTotalPages ?? 1) ? 0.5 : 1 }}
+                >Next →</button>
+              </>
+            )}
+          </div>
         </div>
+        {linesLoading && (
+          <div style={{ padding: '12px 20px', borderBottom: `1px solid ${D.border}`, fontSize: '12px', color: D.secondary }}>Loading lines…</div>
+        )}
         <div style={{ overflowX: 'auto' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
