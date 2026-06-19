@@ -20,6 +20,23 @@ const D = {
 const CHUNK_SIZE = 1000
 const IGNORE     = '__ignore__'
 
+const COUNTRIES = [
+  { code: 'AT', name: 'Austria' }, { code: 'AU', name: 'Australia' }, { code: 'BE', name: 'Belgium' },
+  { code: 'BR', name: 'Brazil' },  { code: 'CA', name: 'Canada' },   { code: 'CH', name: 'Switzerland' },
+  { code: 'CL', name: 'Chile' },   { code: 'CN', name: 'China' },    { code: 'CZ', name: 'Czech Republic' },
+  { code: 'DE', name: 'Germany' }, { code: 'DK', name: 'Denmark' },  { code: 'EG', name: 'Egypt' },
+  { code: 'ES', name: 'Spain' },   { code: 'FI', name: 'Finland' },  { code: 'FR', name: 'France' },
+  { code: 'GB', name: 'United Kingdom' }, { code: 'GR', name: 'Greece' }, { code: 'HU', name: 'Hungary' },
+  { code: 'IE', name: 'Ireland' }, { code: 'IL', name: 'Israel' },   { code: 'IN', name: 'India' },
+  { code: 'IT', name: 'Italy' },   { code: 'JP', name: 'Japan' },    { code: 'KR', name: 'South Korea' },
+  { code: 'MX', name: 'Mexico' },  { code: 'NL', name: 'Netherlands' }, { code: 'NO', name: 'Norway' },
+  { code: 'NZ', name: 'New Zealand' }, { code: 'PL', name: 'Poland' }, { code: 'PT', name: 'Portugal' },
+  { code: 'RO', name: 'Romania' }, { code: 'SA', name: 'Saudi Arabia' }, { code: 'SE', name: 'Sweden' },
+  { code: 'SG', name: 'Singapore' }, { code: 'SK', name: 'Slovakia' }, { code: 'TR', name: 'Turkey' },
+  { code: 'UA', name: 'Ukraine' }, { code: 'US', name: 'United States' }, { code: 'ZA', name: 'South Africa' },
+  { code: 'AE', name: 'UAE' },     { code: 'AR', name: 'Argentina' }, { code: 'TH', name: 'Thailand' },
+]
+
 // ─── Import type definitions ──────────────────────────────────────────────────
 
 interface ImportTypeSummary {
@@ -503,6 +520,9 @@ export default function ImportsPage() {
   const [showCustomModal,   setShowCustomModal]   = useState(false)
   const [detectedPriceList, setDetectedPriceList] = useState<DetectedPriceList | null>(null)
   const [priceListEffDate,  setPriceListEffDate]  = useState<string>(new Date().toISOString().slice(0, 10))
+  const [plName,            setPlName]            = useState<string>('')
+  const [plCountry,         setPlCountry]         = useState<string>('')
+  const [plCurrency,        setPlCurrency]        = useState<string>('')
   const [purchaseSiteId,    setPurchaseSiteId]    = useState<string>('')
   const [purchaseSites,     setPurchaseSites]     = useState<Array<{ id: string; name: string; code: string }>>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -540,6 +560,11 @@ export default function ImportsPage() {
       setHeaders(h)
       setRows(r)
       setDetectedPriceList(detected ?? null)
+      if (detected) {
+        if (detected.priceListName) setPlName(detected.priceListName)
+        if (detected.targetCountry) setPlCountry(detected.targetCountry)
+        if (detected.currency)      setPlCurrency(detected.currency)
+      }
 
       // If format detected and user is on generic type, switch to price_list
       if (detected && importType.type !== 'price_list') {
@@ -589,7 +614,7 @@ export default function ImportsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           importType: importType.type, fileName, mapping, totalRows: rows.length,
-          ...(detectedPriceList ? { priceListMeta: { ...detectedPriceList, effectiveDate: priceListEffDate } } : {}),
+          ...(importType.type === 'price_list' ? { priceListMeta: { priceListName: plName, targetCountry: plCountry, currency: plCurrency, effectiveDate: priceListEffDate } } : {}),
           ...(importType.type === 'purchase_history' && purchaseSiteId
             ? { purchaseHistoryMeta: { defaultSiteId: purchaseSiteId } }
             : {}),
@@ -624,7 +649,7 @@ export default function ImportsPage() {
       }
     } catch { setError('Upload failed. Please try again.') }
     finally { setUploading(false) }
-  }, [importType, rows, fileName, mapping, detectedPriceList, priceListEffDate, purchaseSiteId])
+  }, [importType, rows, fileName, mapping, plName, plCountry, plCurrency, priceListEffDate, purchaseSiteId])
 
   async function handleCommit() {
     if (!validation) return
@@ -649,10 +674,23 @@ export default function ImportsPage() {
     setProgress(null); setSaveTemplate(false); setTemplateName(''); setError(null)
     setDetectedPriceList(null)
     setPriceListEffDate(new Date().toISOString().slice(0, 10))
+    setPlName(''); setPlCountry(''); setPlCurrency('')
     setPurchaseSiteId('')
     abortRef.current = false
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
+
+  // Price list quality metrics (BG-006/BG-007) — computed client-side from rows + current mapping
+  const plPartCol    = importType?.type === 'price_list' ? Object.entries(mapping).find(([,v]) => v === 'part_number')?.[0] : undefined
+  const plPriceCol   = importType?.type === 'price_list' ? Object.entries(mapping).find(([,v]) => v === 'unit_price')?.[0] : undefined
+  const plCcyCol     = importType?.type === 'price_list' ? Object.entries(mapping).find(([,v]) => v === 'currency')?.[0] : undefined
+  const plPartNums   = plPartCol  ? rows.map(r => String(r[plPartCol]  ?? '').trim()).filter(Boolean) : []
+  const plPartNumSet = new Set(plPartNums)
+  const plDupCount   = plPartNums.length - plPartNumSet.size
+  const plMissingPN  = rows.length > 0 && plPartCol ? rows.length - plPartNums.length : 0
+  const plPrices     = plPriceCol ? rows.map(r => Number(r[plPriceCol] ?? ''))        : []
+  const plZeroCount  = plPrices.filter(p => !isNaN(p) && p === 0).length
+  const plNegCount   = plPrices.filter(p => !isNaN(p) && p < 0).length
 
   // Mapping completeness
   const requiredFields    = fields.filter(f => f.required_by_default && !f.is_deprecated)
@@ -759,37 +797,121 @@ export default function ImportsPage() {
             </div>
           )}
 
-          {/* Price list format detection banner */}
-          {detectedPriceList && (
-            <div style={{ background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', padding: '14px 18px', marginBottom: '20px' }}>
-              <div style={{ fontSize: '13px', fontWeight: 700, color: '#166534', marginBottom: '6px' }}>
-                ✓ Standard Price List Format Detected
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
-                {[
-                  { label: 'Price List Name', value: detectedPriceList.priceListName || '—' },
-                  { label: 'Target Country',  value: detectedPriceList.targetCountry  || '—' },
-                  { label: 'Currency',        value: detectedPriceList.currency       || '—' },
-                  { label: 'Item Rows',       value: fmtNum(rows.length) },
-                ].map(s => (
-                  <div key={s.label} style={{ background: '#fff', borderRadius: '6px', padding: '8px 12px' }}>
-                    <div style={{ fontSize: '11px', color: '#166534', fontWeight: 600, marginBottom: '2px' }}>{s.label}</div>
-                    <div style={{ fontSize: '13px', color: '#14532d', fontWeight: 600 }}>{s.value}</div>
+          {/* Price list metadata (BG-002/003/004/005) — always shown for price_list, editable */}
+          {importType?.type === 'price_list' && (
+            <div>
+              <div style={{ background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', padding: '14px 18px', marginBottom: '16px' }}>
+                <div style={{ fontSize: '13px', fontWeight: 700, color: '#166534', marginBottom: '10px' }}>
+                  {detectedPriceList ? '✓ Standard Price List Format Detected — review and edit below' : 'Price List Metadata'}
+                </div>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#166534', display: 'block', marginBottom: '4px' }}>Price List Name *</label>
+                    <input
+                      value={plName}
+                      onChange={e => setPlName(e.target.value)}
+                      placeholder="e.g. IL Standard 2026"
+                      style={{ width: '100%', fontSize: '13px', padding: '5px 8px', border: '1px solid #86EFAC', borderRadius: '4px', background: '#fff', color: '#14532d', boxSizing: 'border-box' }}
+                    />
                   </div>
-                ))}
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#166534', display: 'block', marginBottom: '4px' }}>Target Country</label>
+                    <select
+                      value={plCountry}
+                      onChange={e => setPlCountry(e.target.value)}
+                      style={{ width: '100%', fontSize: '13px', padding: '5px 8px', border: '1px solid #86EFAC', borderRadius: '4px', background: '#fff', color: '#14532d', boxSizing: 'border-box' }}
+                    >
+                      <option value="">— select country —</option>
+                      {COUNTRIES.map(c => <option key={c.code} value={c.code}>{c.code} — {c.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#166534', display: 'block', marginBottom: '4px' }}>Currency (header-level)</label>
+                    <input
+                      value={plCurrency}
+                      onChange={e => setPlCurrency(e.target.value.toUpperCase().replace(/[^A-Z]/g, '').slice(0, 3))}
+                      placeholder="EUR"
+                      maxLength={3}
+                      style={{ width: '100%', fontSize: '13px', padding: '5px 8px', border: '1px solid #86EFAC', borderRadius: '4px', background: '#fff', color: '#14532d', fontFamily: 'monospace', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                  <div>
+                    <label style={{ fontSize: '11px', fontWeight: 600, color: '#166534', display: 'block', marginBottom: '4px' }}>Effective Date *</label>
+                    <input
+                      type="date"
+                      value={priceListEffDate}
+                      onChange={e => setPriceListEffDate(e.target.value)}
+                      style={{ width: '100%', fontSize: '13px', padding: '5px 8px', border: '1px solid #86EFAC', borderRadius: '4px', background: '#fff', color: '#14532d', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                </div>
+                {detectedPriceList && (
+                  <div style={{ marginTop: '10px', fontSize: '12px', color: '#166534' }}>
+                    Row 3 used as column header. A versioned price list will be created on commit.
+                  </div>
+                )}
               </div>
-              <div style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <label style={{ fontSize: '12px', fontWeight: 600, color: '#166534', whiteSpace: 'nowrap' }}>Effective Date *</label>
-                <input
-                  type="date"
-                  value={priceListEffDate}
-                  onChange={e => setPriceListEffDate(e.target.value)}
-                  style={{ fontSize: '13px', padding: '4px 8px', border: '1px solid #86EFAC', borderRadius: '4px', background: '#fff', color: '#14532d' }}
-                />
-                <span style={{ fontSize: '12px', color: '#166534' }}>
-                  Row 3 was used as header. Columns auto-mapped. A versioned price list will be created on commit.
-                </span>
-              </div>
+
+              {/* BG-006 / BG-007 — Preview + quality metrics */}
+              {rows.length > 0 && (
+                <div style={{ marginBottom: '20px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: '10px', marginBottom: '14px' }}>
+                    {[
+                      { label: 'Total rows',     value: rows.length,      warn: false },
+                      { label: 'Unique SKUs',    value: plPartNumSet.size, warn: false },
+                      { label: 'Duplicate SKUs', value: plDupCount,        warn: plDupCount > 0 },
+                      { label: 'Missing SKU',    value: plMissingPN,       warn: plMissingPN > 0 },
+                      { label: 'Zero prices',    value: plZeroCount + plNegCount, warn: plZeroCount + plNegCount > 0 },
+                    ].map(m => (
+                      <div key={m.label} style={{ background: D.card, border: `1px solid ${m.warn ? '#FDE68A' : D.border}`, borderRadius: '6px', padding: '10px', textAlign: 'center' }}>
+                        <div style={{ fontSize: '20px', fontWeight: 700, color: m.warn ? D.warning : D.dark }}>{m.value.toLocaleString()}</div>
+                        <div style={{ fontSize: '11px', color: D.secondary, marginTop: '2px' }}>{m.label}</div>
+                      </div>
+                    ))}
+                  </div>
+
+                  {plPartCol && plPriceCol ? (
+                    <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '6px', overflow: 'hidden' }}>
+                      <div style={{ padding: '8px 14px', borderBottom: `1px solid ${D.border}`, fontSize: '11px', fontWeight: 600, color: D.secondary }}>
+                        FIRST {Math.min(20, rows.length)} ROWS PREVIEW
+                      </div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                          <thead>
+                            <tr style={{ background: D.bg }}>
+                              <th style={{ padding: '6px 10px', textAlign: 'left', color: D.secondary, fontWeight: 600, borderBottom: `1px solid ${D.border}`, width: '40px' }}>#</th>
+                              <th style={{ padding: '6px 10px', textAlign: 'left', color: D.secondary, fontWeight: 600, borderBottom: `1px solid ${D.border}` }}>Part Number</th>
+                              <th style={{ padding: '6px 10px', textAlign: 'right', color: D.secondary, fontWeight: 600, borderBottom: `1px solid ${D.border}` }}>Unit Price</th>
+                              {plCcyCol && <th style={{ padding: '6px 10px', textAlign: 'left', color: D.secondary, fontWeight: 600, borderBottom: `1px solid ${D.border}` }}>Currency</th>}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {rows.slice(0, 20).map((row, idx) => {
+                              const pn    = String(row[plPartCol] ?? '').trim()
+                              const pr    = row[plPriceCol] ?? ''
+                              const cc    = plCcyCol ? String(row[plCcyCol] ?? '').trim() : ''
+                              const prNum = Number(pr)
+                              const priceWarn = !isNaN(prNum) && prNum <= 0
+                              return (
+                                <tr key={idx} style={{ borderBottom: `1px solid ${D.border}`, background: idx % 2 === 0 ? D.card : D.bg }}>
+                                  <td style={{ padding: '5px 10px', color: D.secondary }}>{idx + 1}</td>
+                                  <td style={{ padding: '5px 10px', fontFamily: 'monospace', color: pn ? D.dark : D.error }}>{pn || <span style={{ color: D.error }}>—</span>}</td>
+                                  <td style={{ padding: '5px 10px', textAlign: 'right', fontFamily: 'monospace', color: priceWarn ? D.warning : D.dark }}>{pr !== '' ? pr : '—'}</td>
+                                  {plCcyCol && <td style={{ padding: '5px 10px', color: cc ? D.dark : D.secondary }}>{cc || (plCurrency || '—')}</td>}
+                                </tr>
+                              )
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ padding: '12px 14px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '13px', color: '#92400E' }}>
+                      Map <strong>Part Number</strong> and <strong>Unit Price</strong> columns to see row preview and quality metrics.
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
 

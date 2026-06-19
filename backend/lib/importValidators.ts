@@ -77,6 +77,9 @@ function validateRow(
     case 'purchase_history':
       validatePurchaseHistory(mapped, errors, warnings)
       break
+    case 'price_list':
+      validatePriceList(mapped, errors, warnings)
+      break
     default:
       errors.push(`Import type "${importType}" is not yet supported for validation`)
   }
@@ -204,5 +207,27 @@ function validatePurchaseHistory(
   // site_code: if mapped but empty, flag it
   if ('site_code' in mapped && (mapped['site_code'] === null || String(mapped['site_code'] ?? '').trim() === '')) {
     errors.push('site_code is empty — either map it to a column with values or remove the mapping and select a default site')
+  }
+}
+
+function validatePriceList(
+  mapped: Record<string, string | null>,
+  errors: string[],
+  warnings: string[]
+): void {
+  requireField(mapped, 'part_number', errors)
+  requireField(mapped, 'unit_price', errors)
+
+  const price = mapped['unit_price']
+  if (price !== null && price !== '') {
+    const n = Number(price)
+    if (isNaN(n)) errors.push(`unit_price must be numeric (got: ${price})`)
+    else if (n < 0) errors.push('unit_price cannot be negative')
+    else if (n === 0) warnings.push('unit_price is zero — this SKU will not be costed from this price list')
+  }
+
+  const ccy = String(mapped['currency'] ?? '').toUpperCase().trim()
+  if (ccy && !/^[A-Z]{3}$/.test(ccy)) {
+    errors.push(`currency must be a 3-letter ISO code (got: ${mapped['currency']})`)
   }
 }
