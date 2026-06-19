@@ -10,10 +10,11 @@ const D = {
 }
 
 const STRATEGIES = [
-  { value: 'PRICE_LIST',       label: 'Price List',       desc: 'Read from imported country price list version' },
-  { value: 'BOM_ROLLUP',       label: 'BOM Rollup',       desc: 'Recursively roll up component costs from approved BOMs' },
-  { value: 'LAST_PURCHASE',    label: 'Last Purchase',    desc: 'Most recent ERP purchase price per SKU at this site' },
-  { value: 'AVERAGE_PURCHASE', label: 'Average Purchase', desc: 'Weighted average ERP purchase price over lookback window' },
+  { value: 'PRICE_LIST',       label: 'Price List',                desc: 'Read from imported country price list version' },
+  { value: 'BOM_ROLLUP',       label: 'BOM Rollup',               desc: 'Recursively roll up component costs from approved BOMs' },
+  { value: 'MFG_COST_ROLLUP',  label: 'Manufacturing Cost Rollup', desc: 'BOM + subcontracted process costs per manufacturing cost structure' },
+  { value: 'LAST_PURCHASE',    label: 'Last Purchase',            desc: 'Most recent ERP purchase price per SKU at this site' },
+  { value: 'AVERAGE_PURCHASE', label: 'Average Purchase',         desc: 'Weighted average ERP purchase price over lookback window' },
 ]
 
 const LOOKBACK_OPTIONS = [
@@ -26,6 +27,7 @@ const LOOKBACK_OPTIONS = [
 
 const STRATEGY_LABEL: Record<string, string> = {
   PRICE_LIST: 'Price List', BOM_ROLLUP: 'BOM Rollup',
+  MFG_COST_ROLLUP: 'Mfg Cost Rollup',
   LAST_PURCHASE: 'Last Purchase', AVERAGE_PURCHASE: 'Average Purchase',
   MAKE_OR_BUY: 'Make or Buy', STANDARD_COST: 'Standard Cost', CONTRACT_PRICE: 'Contract Price',
 }

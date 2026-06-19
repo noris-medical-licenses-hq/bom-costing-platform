@@ -11,6 +11,9 @@ import {
   STRATEGY_REGISTRY,
   DEFAULT_FALLBACK_CHAINS,
   resolveStrategyChain,
+  priceListStrategy,
+  lastPurchaseStrategy,
+  averagePurchaseStrategy,
   type BuildStrategyContext,
   type StrategyResult,
 } from './strategies'
@@ -18,10 +21,11 @@ import {
 const BATCH_SIZE = 100
 
 export interface RunBuildResult {
-  lineCount:  number
-  errorCount: number
-  durationMs: number
-  errors:     Array<{ skuId: string; partNumber: string | null; reason: string }>
+  lineCount:       number
+  errorCount:      number
+  incompleteCount: number
+  durationMs:      number
+  errors:          Array<{ skuId: string; partNumber: string | null; reason: string }>
 }
 
 export async function runCostBuild(
@@ -164,6 +168,7 @@ export async function runCostBuild(
     const buildLines: Array<Record<string, unknown>> = []
     const costItems: Array<Record<string, unknown>> = []
     const errors: Array<{ skuId: string; partNumber: string | null; reason: string }> = []
+    const incompleteSkus: Array<{ skuId: string; missingElements: Array<{ seq: number; name: string }> }> = []
 
     async function resolveSkuCost(
       skuId: string,
@@ -193,7 +198,7 @@ export async function runCostBuild(
               strategyUsed: 'BOM_ROLLUP',
               result: {
                 resolvedCost:     bomCost.cost,
-                currency:         'USD',
+                currency:         ctx.buildCurrency,
                 sourceRecordType: 'bom_version',
                 sourceRecordId:   bomCost.bomVersionId,
                 sourceReference:  `BOM v${bomCost.version} — ${bomCost.lineCount} components`,
@@ -201,7 +206,28 @@ export async function runCostBuild(
               fallbackPath: triedStrategies.slice(0, -1),
             }
           }
-          // No BOM found — continue to next strategy in chain
+          continue
+        }
+
+        if (strategy === 'MFG_COST_ROLLUP') {
+          const mfgResult = await computeMfgRollup(skuId, visitStack, costSetId)
+          if (mfgResult !== null) {
+            costMemo.set(skuId, mfgResult.totalCost)
+            if (mfgResult.isIncomplete) incompleteSkus.push({ skuId, missingElements: mfgResult.missingElements })
+            return {
+              cost:         mfgResult.totalCost,
+              strategyUsed: 'MFG_COST_ROLLUP',
+              result: {
+                resolvedCost:     mfgResult.totalCost,
+                currency:         ctx.buildCurrency,
+                sourceRecordType: 'mfg_cost_structure',
+                sourceRecordId:   mfgResult.structureId,
+                sourceReference:  mfgResult.sourceReference,
+                processBreakdown: mfgResult.breakdown,
+              } as StrategyResult & { processBreakdown: unknown },
+              fallbackPath: triedStrategies.slice(0, -1),
+            }
+          }
           continue
         }
 
@@ -291,6 +317,142 @@ export async function runCostBuild(
       return { cost: totalCost, bomVersionId, version: versionNum, lineCount: lines.length }
     }
 
+    // ── computeMfgRollup ──────────────────────────────────────────────────────
+    // Loads the active manufacturing_cost_structure for a SKU and resolves each
+    // element's cost using the existing strategy functions. Returns null if no
+    // active structure is found (engine falls through to BOM_ROLLUP).
+    // Missing elements are flagged — they do NOT silently resolve to zero.
+    interface MfgElementTrace {
+      seq: number; name: string; type: string; category: string
+      cost_source: string; unit_cost: number; qty: number; line_cost: number
+      ref: string | null; missing: boolean
+    }
+    interface MfgRollupResult {
+      totalCost: number; bomCost: number; processCost: number
+      structureId: string; mode: string; isIncomplete: boolean
+      missingElements: Array<{ seq: number; name: string }>
+      sourceReference: string
+      breakdown: Record<string, unknown>
+    }
+
+    async function computeMfgRollup(
+      assemblySkuId: string,
+      visitStack: Set<string>,
+      csId: string
+    ): Promise<MfgRollupResult | null> {
+      // Load active structure for this SKU
+      const { data: structure } = await db
+        .from('manufacturing_cost_structures')
+        .select('id, mode, version_number, effective_date')
+        .eq('organization_id', orgId)
+        .eq('sku_id', assemblySkuId)
+        .eq('is_active', true)
+        .maybeSingle()
+
+      if (!structure) return null
+
+      // Load elements ordered by sequence
+      const { data: elements } = await db
+        .from('mfg_cost_elements')
+        .select('id, sequence, element_type, process_category, name, supplier_id, reference_sku_id, quantity, cost_source, fixed_cost, fixed_currency')
+        .eq('structure_id', structure.id)
+        .order('sequence', { ascending: true })
+
+      const elems: Array<{
+        id: string; sequence: number; element_type: string; process_category: string
+        name: string; reference_sku_id: string | null; quantity: number
+        cost_source: string; fixed_cost: number | null; fixed_currency: string | null
+      }> = elements ?? []
+
+      // Resolve BOM material cost for BOM_PLUS_PROCESS mode
+      let bomCost = 0
+      if (structure.mode === 'BOM_PLUS_PROCESS') {
+        const bomResult = await computeBomRollup(assemblySkuId, visitStack, csId)
+        bomCost = bomResult?.cost ?? 0
+      }
+
+      // Resolve each element cost
+      const elementTraces: MfgElementTrace[] = []
+      const missingElements: Array<{ seq: number; name: string }> = []
+      let processCost = 0
+
+      for (const el of elems) {
+        let unitCost = 0
+        let ref: string | null = null
+        let missing = false
+
+        if (el.cost_source === 'FIXED') {
+          unitCost = Number(el.fixed_cost ?? 0)
+          ref = `${el.fixed_cost} ${el.fixed_currency} (fixed)`
+        } else {
+          // Resolve using existing strategy functions — ctx already has orgId, siteId, currency, lookback
+          const fn = el.cost_source === 'PRICE_LIST'        ? priceListStrategy
+                   : el.cost_source === 'LAST_PURCHASE'     ? lastPurchaseStrategy
+                   : el.cost_source === 'AVERAGE_PURCHASE'  ? averagePurchaseStrategy
+                   : null
+
+          if (fn && el.reference_sku_id) {
+            const result = await fn(el.reference_sku_id, ctx)
+            if (result) {
+              unitCost = result.resolvedCost
+              ref = result.sourceReference
+            } else {
+              missing = true
+              missingElements.push({ seq: el.sequence, name: el.name })
+            }
+          } else {
+            missing = true
+            missingElements.push({ seq: el.sequence, name: el.name })
+          }
+        }
+
+        const lineCost = unitCost * Number(el.quantity)
+        processCost += lineCost
+
+        elementTraces.push({
+          seq:         el.sequence,
+          name:        el.name,
+          type:        el.element_type,
+          category:    el.process_category,
+          cost_source: el.cost_source,
+          unit_cost:   unitCost,
+          qty:         Number(el.quantity),
+          line_cost:   lineCost,
+          ref,
+          missing,
+        })
+      }
+
+      const totalCost = bomCost + processCost
+      const isIncomplete = missingElements.length > 0
+
+      const missingNames = missingElements.map(m => `#${m.seq} ${m.name}`).join(', ')
+      const sourceRef = isIncomplete
+        ? `MFG ${structure.mode} v${structure.version_number} — INCOMPLETE (missing: ${missingNames})`
+        : `MFG ${structure.mode} v${structure.version_number} — BOM ${bomCost.toFixed(4)} + Process ${processCost.toFixed(4)} = ${totalCost.toFixed(4)} ${ctx.buildCurrency}`
+
+      return {
+        totalCost, bomCost, processCost,
+        structureId:    structure.id,
+        mode:           structure.mode,
+        isIncomplete,
+        missingElements,
+        sourceReference: sourceRef,
+        breakdown: {
+          mode:          structure.mode,
+          version:       structure.version_number,
+          effective_date: structure.effective_date,
+          bom_cost:      bomCost,
+          process_cost:  processCost,
+          total_cost:    totalCost,
+          currency:      ctx.buildCurrency,
+          is_incomplete: isIncomplete,
+          missing_elements: missingElements,
+          elements:      elementTraces,
+        },
+      }
+    }
+
     // ── Phase 1: Non-BOM SKUs ─────────────────────────────────────────────────
     const phase1Types = ['PURCHASED', 'SERVICE', 'MANUAL']
     const phase1Skus  = skus.filter(s => phase1Types.includes(s.item_cost_type))
@@ -302,7 +464,7 @@ export async function runCostBuild(
 
       if (resolved.strategyUsed === 'none' || !resolved.result) {
         errors.push({ skuId: sku.id, partNumber: sku.part_number, reason: 'No price found in any strategy' })
-        buildLines.push(buildLine(buildId, orgId, sku.id, sku.item_cost_type, 'none', null, 0, 'USD', []))
+        buildLines.push(buildLine(buildId, orgId, sku.id, sku.item_cost_type, 'none', null, 0, ctx.buildCurrency, [], null))
         continue
       }
 
@@ -310,7 +472,7 @@ export async function runCostBuild(
       buildLines.push(buildLine(
         buildId, orgId, sku.id, sku.item_cost_type,
         resolved.strategyUsed, resolved.result, resolved.cost,
-        resolved.result.currency, resolved.fallbackPath
+        resolved.result.currency, resolved.fallbackPath, null
       ))
     }
 
@@ -325,7 +487,7 @@ export async function runCostBuild(
 
       if (resolved.strategyUsed === 'none' || !resolved.result) {
         errors.push({ skuId: sku.id, partNumber: sku.part_number, reason: 'No BOM or price found' })
-        buildLines.push(buildLine(buildId, orgId, sku.id, sku.item_cost_type, 'none', null, 0, 'USD', []))
+        buildLines.push(buildLine(buildId, orgId, sku.id, sku.item_cost_type, 'none', null, 0, ctx.buildCurrency, [], null))
         continue
       }
 
@@ -333,7 +495,8 @@ export async function runCostBuild(
       buildLines.push(buildLine(
         buildId, orgId, sku.id, sku.item_cost_type,
         resolved.strategyUsed, resolved.result, resolved.cost,
-        resolved.result.currency, resolved.fallbackPath
+        resolved.result.currency, resolved.fallbackPath,
+        (resolved.result as any).processBreakdown ?? null
       ))
     }
 
@@ -353,24 +516,27 @@ export async function runCostBuild(
     await db.from('cost_sets').update({ is_frozen: true }).eq('id', costSetId)
 
     const lineCount = buildLines.filter(l => l['cost_strategy_used'] !== 'none').length
+    const buildStatus = incompleteSkus.length > 0 ? 'complete_with_warnings' : 'complete'
     await db.from('site_cost_builds').update({
-      status:     'complete',
-      line_count: lineCount,
+      status:      buildStatus,
+      line_count:  lineCount,
       error_count: errors.length,
-      built_at:   new Date().toISOString(),
-      built_by:   userId,
+      built_at:    new Date().toISOString(),
+      built_by:    userId,
       parameters_snapshot: {
         valuationDate,
         skuCount:  skus.length,
         lineCount,
-        errorCount: errors.length,
-        durationMs: Date.now() - startMs,
-        buildCurrency: ctx.buildCurrency,
+        errorCount:       errors.length,
+        incompleteCount:  incompleteSkus.length,
+        durationMs:       Date.now() - startMs,
+        buildCurrency:    ctx.buildCurrency,
         averagePurchaseLookbackDays: ctx.averagePurchaseLookbackDays,
+        incompleteMfgSkus: incompleteSkus.length > 0 ? incompleteSkus : undefined,
       },
     }).eq('id', buildId)
 
-    return { lineCount, errorCount: errors.length, durationMs: Date.now() - startMs, errors }
+    return { lineCount, errorCount: errors.length, incompleteCount: incompleteSkus.length, durationMs: Date.now() - startMs, errors }
   } catch (err) {
     await db.from('site_cost_builds').update({ status: 'failed' }).eq('id', buildId)
     throw err
@@ -412,20 +578,22 @@ function buildLine(
   result: StrategyResult | null,
   resolvedCost: number,
   currency: string,
-  fallbackPath: string[]
+  fallbackPath: string[],
+  processBreakdown: Record<string, unknown> | null
 ): Record<string, unknown> {
   return {
-    site_cost_build_id: buildId,
-    organization_id:    orgId,
-    sku_id:             skuId,
-    item_cost_type:     itemCostType,
-    cost_strategy_used: strategyUsed,
-    source_record_type: result?.sourceRecordType ?? null,
-    source_record_id:   result?.sourceRecordId ?? null,
-    source_reference:   result?.sourceReference ?? null,
-    fallback_path:      fallbackPath.length ? fallbackPath.map(s => ({ strategy: s, reason: 'not_available' })) : [],
-    resolved_cost:      resolvedCost,
-    currency:           currency,
-    effective_from:     new Date().toISOString().slice(0, 10),
+    site_cost_build_id:      buildId,
+    organization_id:         orgId,
+    sku_id:                  skuId,
+    item_cost_type:          itemCostType,
+    cost_strategy_used:      strategyUsed,
+    source_record_type:      result?.sourceRecordType ?? null,
+    source_record_id:        result?.sourceRecordId ?? null,
+    source_reference:        result?.sourceReference ?? null,
+    fallback_path:           fallbackPath.length ? fallbackPath.map(s => ({ strategy: s, reason: 'not_available' })) : [],
+    resolved_cost:           resolvedCost,
+    currency:                currency,
+    effective_from:          new Date().toISOString().slice(0, 10),
+    process_cost_breakdown:  processBreakdown ?? null,
   }
 }

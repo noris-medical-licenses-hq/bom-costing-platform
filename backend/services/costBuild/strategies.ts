@@ -167,12 +167,19 @@ const contractPriceStrategy: StrategyFn = async () => null
 // Stubbed for future implementation.
 const customerSpecificCostStrategy: StrategyFn = async () => null
 
+// ── MFG_COST_ROLLUP ───────────────────────────────────────────────────────────
+// Handled specially in the build engine (like BOM_ROLLUP) — this stub is only
+// here so the strategy appears in STRATEGY_REGISTRY for comparison/validation.
+// The engine's computeMfgRollup function does the actual work.
+const mfgCostRollupStrategy: StrategyFn = async () => null
+
 // ─── Registry ────────────────────────────────────────────────────────────────
 
 export const STRATEGY_REGISTRY: Record<string, StrategyFn> = {
   PRICE_LIST:             priceListStrategy,
   LAST_PURCHASE:          lastPurchaseStrategy,
   AVERAGE_PURCHASE:       averagePurchaseStrategy,
+  MFG_COST_ROLLUP:        mfgCostRollupStrategy,
   MANUAL_OVERRIDE:        manualOverrideStrategy,
   STANDARD_COST:          standardCostStrategy,
   CONTRACT_PRICE:         contractPriceStrategy,
@@ -208,6 +215,14 @@ export const STRATEGY_STATUS_MATRIX: Record<string, StrategyMeta> = {
     fallbackChain: [],
     description:   'Recursively rolls up component costs using the latest approved BOM version.',
     notesForUI:    'Requires approved BOMs for all manufactured assemblies.',
+  },
+  MFG_COST_ROLLUP: {
+    label:         'Manufacturing Cost Rollup',
+    status:        'fully_operational',
+    sourceTables:  ['manufacturing_cost_structures', 'mfg_cost_elements', 'bom_versions', 'bom_lines', 'purchase_history', 'price_list_version_items'],
+    fallbackChain: ['BOM_ROLLUP'],
+    description:   'BOM Rollup + ordered subcontracted process costs (BOM_PLUS_PROCESS) or process costs only (PROCESS_ONLY).',
+    notesForUI:    'Requires a Manufacturing Cost Structure defined for this SKU. Falls back to BOM Rollup if no structure exists.',
   },
   LAST_PURCHASE: {
     label:         'Last Purchase',
@@ -275,6 +290,9 @@ export const DEFAULT_FALLBACK_CHAINS: Record<string, string[]> = {
   MANUAL:       ['MANUAL_OVERRIDE', 'PRICE_LIST'],
 }
 
+// Exported strategy functions for use in mfg element cost resolution
+export { priceListStrategy, lastPurchaseStrategy, averagePurchaseStrategy }
+
 // Determine the effective strategy chain for a given SKU, considering:
 // 1. sku_cost_overrides for this site (highest priority)
 // 2. default_strategy from the Cost Build
@@ -295,6 +313,17 @@ export function resolveStrategyChain(
   }
   if (defaultStrategy === 'PRICE_LIST' && itemCostType === 'MANUFACTURED') {
     return DEFAULT_FALLBACK_CHAINS['MANUFACTURED']
+  }
+  // MFG_COST_ROLLUP is only meaningful for manufactured SKUs — falls back to BOM_ROLLUP
+  if (defaultStrategy === 'MFG_COST_ROLLUP' && itemCostType === 'MANUFACTURED') {
+    return ['MFG_COST_ROLLUP', 'BOM_ROLLUP']
+  }
+  if (defaultStrategy === 'MFG_COST_ROLLUP' && itemCostType === 'MAKE_OR_BUY') {
+    return ['MFG_COST_ROLLUP', 'BOM_ROLLUP', 'LAST_PURCHASE', 'PRICE_LIST']
+  }
+  if (defaultStrategy === 'MFG_COST_ROLLUP') {
+    // For purchased/service SKUs, MFG doesn't apply — use normal purchased chain
+    return DEFAULT_FALLBACK_CHAINS[itemCostType] ?? ['PRICE_LIST']
   }
 
   // For MAKE_OR_BUY: always try BOM first regardless of site default

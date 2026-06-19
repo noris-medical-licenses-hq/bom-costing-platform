@@ -7,7 +7,7 @@ const CreateSchema = z.object({
   siteId:                       z.string().uuid(),
   name:                         z.string().min(1).max(200),
   description:                  z.string().max(500).optional(),
-  defaultStrategy:              z.enum(['PRICE_LIST', 'BOM_ROLLUP', 'LAST_PURCHASE', 'AVERAGE_PURCHASE']),
+  defaultStrategy:              z.enum(['PRICE_LIST', 'BOM_ROLLUP', 'LAST_PURCHASE', 'AVERAGE_PURCHASE', 'MFG_COST_ROLLUP']),
   priceListVersionId:           z.string().uuid().optional(),
   baseCurrency:                 z.string().length(3).toUpperCase().default('EUR'),
   averagePurchaseLookbackDays:  z.number().int().refine(v => [30, 90, 180, 365, 730].includes(v)).default(365),
