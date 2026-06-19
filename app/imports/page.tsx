@@ -64,12 +64,14 @@ interface UploadProgress {
   totalRows: number; processedRows: number; validRows: number
   warningRows: number; errorRows: number
   sampleErrors: Array<{ row: number; errors: string[] }>; aborted: boolean
+  fileNotes: string[]  // deduplicated file-level notes (e.g. currency symbol normalization)
 }
 
 interface ValidationSummary {
   jobId: string; totalRows: number; validRows: number
   warningRows: number; errorRows: number
   sampleErrors: Array<{ row: number; errors: string[] }>
+  fileNotes: string[]
 }
 
 interface PriceListQualityMetrics {
@@ -605,7 +607,7 @@ export default function ImportsPage() {
   const handleChunkedUpload = useCallback(async () => {
     if (!importType || !rows.length) return
     setUploading(true); setError(null); abortRef.current = false
-    const prog: UploadProgress = { totalRows: rows.length, processedRows: 0, validRows: 0, warningRows: 0, errorRows: 0, sampleErrors: [], aborted: false }
+    const prog: UploadProgress = { totalRows: rows.length, processedRows: 0, validRows: 0, warningRows: 0, errorRows: 0, sampleErrors: [], aborted: false, fileNotes: [] }
     setProgress({ ...prog })
 
     try {
@@ -640,11 +642,15 @@ export default function ImportsPage() {
         prog.warningRows   = d.totalWarnings
         prog.errorRows     = d.totalErrors
         prog.sampleErrors  = [...prog.sampleErrors, ...(d.sampleErrors ?? [])].slice(0, 20)
+        // Accumulate currency notes — deduplicate so each message appears only once
+        for (const note of (d.currencyNotes ?? []) as string[]) {
+          if (!prog.fileNotes.includes(note)) prog.fileNotes.push(note)
+        }
         setProgress({ ...prog })
       }
 
       if (!prog.aborted) {
-        setValidation({ jobId, totalRows: prog.totalRows, validRows: prog.validRows, warningRows: prog.warningRows, errorRows: prog.errorRows, sampleErrors: prog.sampleErrors })
+        setValidation({ jobId, totalRows: prog.totalRows, validRows: prog.validRows, warningRows: prog.warningRows, errorRows: prog.errorRows, sampleErrors: prog.sampleErrors, fileNotes: prog.fileNotes })
         setStep('validation')
       }
     } catch { setError('Upload failed. Please try again.') }
@@ -1032,6 +1038,13 @@ export default function ImportsPage() {
               </Card>
             ))}
           </div>
+
+          {validation.fileNotes.length > 0 && (
+            <div style={{ background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', color: '#92400E' }}>
+              <div style={{ fontWeight: 600, marginBottom: '4px' }}>File-level normalization</div>
+              {validation.fileNotes.map((note, i) => <div key={i}>{note}</div>)}
+            </div>
+          )}
 
           {validation.sampleErrors.length > 0 && (
             <Card style={{ marginBottom: '20px', borderColor: '#FECACA', background: D.redLight }}>

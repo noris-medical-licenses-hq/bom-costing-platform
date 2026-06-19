@@ -76,12 +76,13 @@ export async function POST(request: NextRequest) {
 
       for (const r of page as Array<{ id: string; row_number: number; status: string; errors: unknown; warnings: unknown; mapped_data: unknown }>) {
         allRows.push({
-          rowNumber:  r.row_number,
-          rowId:      r.id,
-          status:     r.status as 'valid' | 'warning' | 'error',
-          errors:     (r.errors as string[] | null) ?? [],
-          warnings:   (r.warnings as string[] | null) ?? [],
-          mappedData: (r.mapped_data as Record<string, string | number | boolean | null>) ?? {},
+          rowNumber:      r.row_number,
+          rowId:          r.id,
+          status:         r.status as 'valid' | 'warning' | 'error',
+          errors:         (r.errors as string[] | null) ?? [],
+          warnings:       (r.warnings as string[] | null) ?? [],
+          normalizations: [],  // not stored in DB; not needed at commit time
+          mappedData:     (r.mapped_data as Record<string, string | number | boolean | null>) ?? {},
         })
       }
 

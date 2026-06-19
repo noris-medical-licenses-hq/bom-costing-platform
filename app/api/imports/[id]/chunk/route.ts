@@ -92,6 +92,19 @@ export async function POST(
       .slice(0, 10)
       .map(r => ({ row: r.rowNumber, errors: r.errors }))
 
+    // Collect currency normalizations across the chunk and deduplicate by symbol.
+    // Returned as file-level notes so the UI can show ONE banner instead of per-row warnings.
+    const normMap = new Map<string, string>() // symbol → ISO
+    for (const r of validated) {
+      for (const note of r.normalizations ?? []) {
+        const m = note.match(/^'(.+)' → (.+)$/)
+        if (m) normMap.set(m[1], m[2])
+      }
+    }
+    const currencyNotes = [...normMap.entries()].map(
+      ([sym, iso]) => `Currency symbol '${sym}' normalized to ${iso}`
+    )
+
     return NextResponse.json({
       processed:    rows.length,
       valid:        validCount,
@@ -103,6 +116,7 @@ export async function POST(
       totalErrors:    newError,
       isComplete,
       sampleErrors,
+      currencyNotes,
     })
   } catch (err) {
     console.error('[POST /api/imports/[id]/chunk]', err)

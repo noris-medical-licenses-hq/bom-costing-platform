@@ -6,7 +6,23 @@ export interface RowValidationResult {
   status: 'valid' | 'warning' | 'error'
   errors: string[]
   warnings: string[]
+  normalizations: string[]  // informational notes that don't affect status (e.g. currency symbol → ISO)
   mappedData: Record<string, string | number | boolean | null>
+}
+
+// Maps currency display symbols to ISO-4217 codes.
+// Allows files that store "$" or "€" instead of "USD" / "EUR" to import without error.
+const CURRENCY_SYMBOLS: Record<string, string> = {
+  '$':  'USD',
+  '€':  'EUR',
+  '₪':  'ILS',
+  '£':  'GBP',
+  '¥':  'JPY',
+  '₩':  'KRW',
+  'A$': 'AUD',
+  'C$': 'CAD',
+  'Fr': 'CHF',
+  'kr': 'SEK',
 }
 
 export function validateRows(
@@ -55,10 +71,11 @@ function validateRow(
 ): RowValidationResult {
   const errors: string[] = []
   const warnings: string[] = []
+  const normalizations: string[] = []
   const mapped = applyMapping(rawData, mapping)
 
   if (isAllEmpty(mapped)) {
-    return { rowNumber, status: 'error', errors: ['Empty row — skipped'], warnings: [], mappedData: {} }
+    return { rowNumber, status: 'error', errors: ['Empty row — skipped'], warnings: [], normalizations: [], mappedData: {} }
   }
 
   switch (importType) {
@@ -78,14 +95,14 @@ function validateRow(
       validatePurchaseHistory(mapped, errors, warnings)
       break
     case 'price_list':
-      validatePriceList(mapped, errors, warnings)
+      validatePriceList(mapped, errors, warnings, normalizations)
       break
     default:
       errors.push(`Import type "${importType}" is not yet supported for validation`)
   }
 
   const status = errors.length > 0 ? 'error' : warnings.length > 0 ? 'warning' : 'valid'
-  return { rowNumber, status, errors, warnings, mappedData: mapped as Record<string, string | number | boolean | null> }
+  return { rowNumber, status, errors, warnings, normalizations, mappedData: mapped as Record<string, string | number | boolean | null> }
 }
 
 function validateSkuMaster(
@@ -213,7 +230,8 @@ function validatePurchaseHistory(
 function validatePriceList(
   mapped: Record<string, string | null>,
   errors: string[],
-  warnings: string[]
+  warnings: string[],
+  normalizations: string[]
 ): void {
   requireField(mapped, 'part_number', errors)
   requireField(mapped, 'unit_price', errors)
@@ -226,8 +244,22 @@ function validatePriceList(
     else if (n === 0) warnings.push('unit_price is zero — this SKU will not be costed from this price list')
   }
 
-  const ccy = String(mapped['currency'] ?? '').toUpperCase().trim()
-  if (ccy && !/^[A-Z]{3}$/.test(ccy)) {
-    errors.push(`currency must be a 3-letter ISO code (got: ${mapped['currency']})`)
+  const rawCcy = String(mapped['currency'] ?? '').trim()
+  if (rawCcy) {
+    const isoFromSymbol = CURRENCY_SYMBOLS[rawCcy]
+    if (isoFromSymbol) {
+      // Normalize symbol to ISO in-place so the committer receives the correct code.
+      // Track for file-level aggregation — does not affect row status.
+      mapped['currency'] = isoFromSymbol
+      normalizations.push(`'${rawCcy}' → ${isoFromSymbol}`)
+    } else {
+      const upperCcy = rawCcy.toUpperCase()
+      if (!/^[A-Z]{3}$/.test(upperCcy)) {
+        errors.push(`currency must be a 3-letter ISO code (got: ${rawCcy})`)
+      } else {
+        mapped['currency'] = upperCcy  // normalize case
+      }
+    }
   }
+  // Empty currency is valid — row inherits the header-level currency set in priceListMeta
 }
