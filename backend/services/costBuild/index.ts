@@ -99,6 +99,8 @@ export async function runCostBuild(
     const siteName: string = (build.sites as any)?.name ?? build.site_id
     const strategyLabel = build.default_strategy.replace(/_/g, ' ')
     const costSetName = `${siteName} — ${strategyLabel} (${valuationDate})`
+    const buildCurrency: string = build.base_currency ?? 'EUR'
+    const averagePurchaseLookbackDays: number = build.average_purchase_lookback_days ?? 365
 
     const { data: costSet, error: csErr } = await db
       .from('cost_sets')
@@ -107,7 +109,7 @@ export async function runCostBuild(
         name:                 costSetName,
         cost_set_type:        build.default_strategy,
         effective_from:       valuationDate,
-        base_currency:        'USD',
+        base_currency:        buildCurrency,
         is_active:            true,
         is_frozen:            false,
         site_id:              build.site_id,
@@ -126,7 +128,16 @@ export async function runCostBuild(
       .update({ cost_set_id: costSetId })
       .eq('id', buildId)
 
-    const ctx: BuildStrategyContext = { orgId, siteId: build.site_id, costSetId, db, valuationDate, priceListVersionId }
+    const ctx: BuildStrategyContext = {
+      orgId,
+      siteId: build.site_id,
+      costSetId,
+      db,
+      valuationDate,
+      priceListVersionId,
+      buildCurrency,
+      averagePurchaseLookbackDays,
+    }
 
     // ── Load all active SKUs ──────────────────────────────────────────────────
     const { data: skuRows } = await db
@@ -354,6 +365,8 @@ export async function runCostBuild(
         lineCount,
         errorCount: errors.length,
         durationMs: Date.now() - startMs,
+        buildCurrency: ctx.buildCurrency,
+        averagePurchaseLookbackDays: ctx.averagePurchaseLookbackDays,
       },
     }).eq('id', buildId)
 

@@ -18,12 +18,14 @@ export interface StrategyResult {
 }
 
 export interface BuildStrategyContext {
-  orgId:               string
-  siteId:              string
-  costSetId:           string
-  db:                  any  // service Supabase client (already cast)
-  valuationDate:       string
-  priceListVersionId:  string | null  // set at build start; null if no price list for site's country
+  orgId:                       string
+  siteId:                      string
+  costSetId:                   string
+  db:                          any  // service Supabase client (already cast)
+  valuationDate:               string
+  priceListVersionId:          string | null  // set at build start; null if no price list for site's country
+  buildCurrency:               string  // cost set base currency; AVERAGE_PURCHASE filters by this
+  averagePurchaseLookbackDays: number  // frozen into parameters_snapshot for reproducibility
 }
 
 export type StrategyFn = (
@@ -61,12 +63,93 @@ const priceListStrategy: StrategyFn = async (skuId, ctx) => {
 }
 
 // ── LAST_PURCHASE ─────────────────────────────────────────────────────────────
-// Stubbed: purchase order history not yet in schema.
-const lastPurchaseStrategy: StrategyFn = async () => null
+// Fetches the single most recent purchase_history record for this SKU at this site
+// with unit_cost > 0. Site-scoped for accurate per-site costing.
+const lastPurchaseStrategy: StrategyFn = async (skuId, ctx) => {
+  const { data } = await ctx.db
+    .from('purchase_history')
+    .select('id, unit_cost, currency, purchase_date, source_reference, source_system, suppliers(name, code)')
+    .eq('organization_id', ctx.orgId)
+    .eq('sku_id', skuId)
+    .eq('site_id', ctx.siteId)
+    .gt('unit_cost', 0)
+    .order('purchase_date', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (!data) return null
+
+  const supplier = (data.suppliers as any)?.name ?? null
+  const ref = data.source_reference ?? data.source_system ?? null
+  const parts = [ref, supplier, data.purchase_date, `${data.unit_cost} ${data.currency}`].filter(Boolean)
+
+  return {
+    resolvedCost:     Number(data.unit_cost),
+    currency:         data.currency,
+    sourceRecordType: 'purchase_history',
+    sourceRecordId:   data.id,
+    sourceReference:  parts.join(' | '),
+  }
+}
 
 // ── AVERAGE_PURCHASE ──────────────────────────────────────────────────────────
-// Stubbed: purchase order history not yet in schema.
-const averagePurchaseStrategy: StrategyFn = async () => null
+// Weighted average cost over ctx.averagePurchaseLookbackDays, filtered to records
+// matching ctx.buildCurrency only. Cross-currency mixing is not performed — FX
+// conversion is a future phase. Excluded records are counted and shown in the trace.
+const averagePurchaseStrategy: StrategyFn = async (skuId, ctx) => {
+  const cutoff = new Date(Date.now() - ctx.averagePurchaseLookbackDays * 86_400_000)
+    .toISOString()
+    .slice(0, 10)
+
+  // Load all non-zero cost records in the lookback window for this SKU+site
+  const { data } = await ctx.db
+    .from('purchase_history')
+    .select('unit_cost, quantity, currency')
+    .eq('organization_id', ctx.orgId)
+    .eq('sku_id', skuId)
+    .eq('site_id', ctx.siteId)
+    .gt('unit_cost', 0)
+    .gte('purchase_date', cutoff)
+
+  if (!data || data.length === 0) return null
+
+  const included = data.filter((r: any) => r.currency === ctx.buildCurrency)
+  const excluded = data.length - included.length
+
+  if (included.length === 0) return null
+
+  let totalValue = 0
+  let totalQty   = 0
+  for (const r of included as Array<{ unit_cost: number; quantity: number }>) {
+    totalValue += Number(r.unit_cost) * Number(r.quantity)
+    totalQty   += Number(r.quantity)
+  }
+  if (totalQty === 0) return null
+
+  const avg = totalValue / totalQty
+
+  // Count distinct excluded currencies for the trace
+  const excCurrencies = excluded > 0
+    ? [...new Set((data as Array<{ currency: string }>)
+        .filter(r => r.currency !== ctx.buildCurrency)
+        .map(r => r.currency))]
+      .join('/')
+    : null
+
+  const refParts = [
+    `${ctx.averagePurchaseLookbackDays}d avg ${avg.toFixed(4)} ${ctx.buildCurrency}`,
+    `${included.length} records used`,
+    excluded > 0 ? `${excluded} excluded (${excCurrencies})` : null,
+  ].filter(Boolean)
+
+  return {
+    resolvedCost:     avg,
+    currency:         ctx.buildCurrency,
+    sourceRecordType: 'purchase_history',
+    sourceRecordId:   null,
+    sourceReference:  refParts.join(' | '),
+  }
+}
 
 // ── MANUAL_OVERRIDE ───────────────────────────────────────────────────────────
 // Stubbed: would read from a manual-override table.
@@ -128,19 +211,19 @@ export const STRATEGY_STATUS_MATRIX: Record<string, StrategyMeta> = {
   },
   LAST_PURCHASE: {
     label:         'Last Purchase',
-    status:        'placeholder',
-    sourceTables:  ['purchase_orders'],
+    status:        'fully_operational',
+    sourceTables:  ['purchase_history'],
     fallbackChain: ['PRICE_LIST'],
-    description:   'Uses the most recent purchase order line price for this SKU.',
-    notesForUI:    'Not operational — purchase_orders table not yet in schema.',
+    description:   'Uses the most recent ERP purchase price for this SKU at this site.',
+    notesForUI:    'Requires purchase history imported from your ERP. Falls back to Price List if no history.',
   },
   AVERAGE_PURCHASE: {
     label:         'Average Purchase',
-    status:        'placeholder',
-    sourceTables:  ['purchase_orders'],
+    status:        'fully_operational',
+    sourceTables:  ['purchase_history'],
     fallbackChain: ['PRICE_LIST'],
-    description:   'Uses the 12-month weighted average purchase price.',
-    notesForUI:    'Not operational — purchase_orders table not yet in schema.',
+    description:   'Weighted average purchase price over configurable lookback window, filtered by build currency.',
+    notesForUI:    'Requires purchase history imported from your ERP. Lookback window and currency set at build creation.',
   },
   MANUAL_OVERRIDE: {
     label:         'Manual Override',

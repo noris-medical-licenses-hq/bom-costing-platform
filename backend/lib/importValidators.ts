@@ -73,6 +73,9 @@ function validateRow(
     case 'inventory_snapshot':
       validateInventory(mapped, errors, warnings)
       break
+    case 'purchase_history':
+      validatePurchaseHistory(mapped, errors, warnings)
+      break
     default:
       errors.push(`Import type "${importType}" is not yet supported for validation`)
   }
@@ -161,5 +164,44 @@ function validateInventory(
   const sd = mapped['snapshot_date']
   if (sd && isNaN(Date.parse(String(sd)))) {
     errors.push(`Snapshot date is not a valid date (got: ${sd})`)
+  }
+}
+
+function validatePurchaseHistory(
+  mapped: Record<string, string | null>,
+  errors: string[],
+  warnings: string[]
+): void {
+  requireField(mapped, 'sku_part_number', errors)
+  requireField(mapped, 'purchase_date', errors)
+  requireField(mapped, 'quantity', errors)
+  requireField(mapped, 'unit_cost', errors)
+  requireField(mapped, 'currency', errors)
+
+  const dateVal = mapped['purchase_date']
+  if (dateVal && isNaN(Date.parse(String(dateVal)))) {
+    errors.push(`purchase_date is not a valid date (got: ${dateVal})`)
+  }
+
+  const qty = Number(mapped['quantity'])
+  if (mapped['quantity'] !== null && mapped['quantity'] !== '') {
+    if (isNaN(qty) || qty <= 0) errors.push(`quantity must be a positive number (got: ${mapped['quantity']})`)
+  }
+
+  const cost = Number(mapped['unit_cost'])
+  if (mapped['unit_cost'] !== null && mapped['unit_cost'] !== '') {
+    if (isNaN(cost)) errors.push(`unit_cost must be numeric (got: ${mapped['unit_cost']})`)
+    else if (cost < 0) errors.push('unit_cost cannot be negative')
+    else if (cost === 0) warnings.push('unit_cost is zero — this record will not be used by costing strategies')
+  }
+
+  const ccy = String(mapped['currency'] ?? '').toUpperCase().trim()
+  if (ccy && !/^[A-Z]{3}$/.test(ccy)) {
+    errors.push(`currency must be a 3-letter ISO code (got: ${mapped['currency']})`)
+  }
+
+  // site_code: if mapped but empty, flag it
+  if ('site_code' in mapped && (mapped['site_code'] === null || String(mapped['site_code'] ?? '').trim() === '')) {
+    errors.push('site_code is empty — either map it to a column with values or remove the mapping and select a default site')
   }
 }

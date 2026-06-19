@@ -11,6 +11,7 @@ export type ImportType =
   | 'rule_exceptions'
   | 'virtual_components'
   | 'price_list'
+  | 'purchase_history'
 
 export interface TargetField {
   key: string
@@ -62,6 +63,17 @@ export const TARGET_FIELDS: Record<ImportType, TargetField[]> = {
     { key: 'unit_price',  label: 'Unit Price',           required: true,  type: 'number' },
     { key: 'currency',    label: 'Currency',             required: false, type: 'string' },
   ],
+  purchase_history: [
+    { key: 'sku_part_number', label: 'Part Number',       required: true,  type: 'string', hint: 'Must match an existing SKU part number' },
+    { key: 'purchase_date',   label: 'Purchase Date',     required: true,  type: 'date',   hint: 'YYYY-MM-DD' },
+    { key: 'quantity',        label: 'Quantity',          required: true,  type: 'number', hint: 'Units purchased (> 0)' },
+    { key: 'unit_cost',       label: 'Unit Cost',         required: true,  type: 'number', hint: 'Price per unit (0 = zero-cost sample)' },
+    { key: 'currency',        label: 'Currency',          required: true,  type: 'string', hint: '3-letter ISO code, e.g. EUR' },
+    { key: 'site_code',       label: 'Site Code',         required: false, type: 'string', hint: 'Must match sites.code — omit if selecting default site at import time' },
+    { key: 'supplier_code',   label: 'Supplier Code',     required: false, type: 'string', hint: 'Must match suppliers.code in the system' },
+    { key: 'source_system',   label: 'Source System',     required: false, type: 'string', hint: 'ERP system name (SAP, Oracle, Navision…)' },
+    { key: 'source_reference',label: 'Source Reference',  required: false, type: 'string', hint: 'ERP document reference (PO number, line ID…)' },
+  ],
   // Phase-2 types — structure defined, commit not yet implemented
   supplier_prices:    [],
   suppliers:          [],
@@ -78,6 +90,7 @@ export const IMPORT_TYPE_LABELS: Record<ImportType, string> = {
   costs:              'Costs',
   inventory_snapshot: 'Inventory Snapshot',
   price_list:         'Price List',
+  purchase_history:   'Purchase History',
   supplier_prices:    'Supplier Prices',
   suppliers:          'Suppliers',
   sites:              'Sites',

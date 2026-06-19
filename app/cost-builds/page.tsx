@@ -9,16 +9,25 @@ const D = {
   teal: '#0d9488',
 }
 
-// Only operational strategies shown in UI — stubs (LAST_PURCHASE, etc.) are hidden.
 const STRATEGIES = [
-  { value: 'PRICE_LIST', label: 'Price List', desc: 'Read from imported country price list version' },
-  { value: 'BOM_ROLLUP', label: 'BOM Rollup', desc: 'Recursively roll up component costs from approved BOMs' },
+  { value: 'PRICE_LIST',       label: 'Price List',       desc: 'Read from imported country price list version' },
+  { value: 'BOM_ROLLUP',       label: 'BOM Rollup',       desc: 'Recursively roll up component costs from approved BOMs' },
+  { value: 'LAST_PURCHASE',    label: 'Last Purchase',    desc: 'Most recent ERP purchase price per SKU at this site' },
+  { value: 'AVERAGE_PURCHASE', label: 'Average Purchase', desc: 'Weighted average ERP purchase price over lookback window' },
+]
+
+const LOOKBACK_OPTIONS = [
+  { value: 30,  label: '30 days'  },
+  { value: 90,  label: '90 days'  },
+  { value: 180, label: '180 days' },
+  { value: 365, label: '365 days' },
+  { value: 730, label: '730 days' },
 ]
 
 const STRATEGY_LABEL: Record<string, string> = {
   PRICE_LIST: 'Price List', BOM_ROLLUP: 'BOM Rollup',
-  MAKE_OR_BUY: 'Make or Buy', LAST_PURCHASE: 'Last Purchase',
-  STANDARD_COST: 'Standard Cost', CONTRACT_PRICE: 'Contract Price',
+  LAST_PURCHASE: 'Last Purchase', AVERAGE_PURCHASE: 'Average Purchase',
+  MAKE_OR_BUY: 'Make or Buy', STANDARD_COST: 'Standard Cost', CONTRACT_PRICE: 'Contract Price',
 }
 
 const STATUS_COLOR: Record<string, string> = {
@@ -71,6 +80,7 @@ export default function CostBuildsPage() {
   const [filterSite,   setFilterSite]   = useState('')
   const [form, setForm] = useState({
     siteId: '', name: '', description: '', defaultStrategy: 'BOM_ROLLUP', notes: '',
+    baseCurrency: 'EUR', averagePurchaseLookbackDays: 365,
   })
 
   const load = useCallback(async () => {
@@ -106,17 +116,19 @@ export default function CostBuildsPage() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        siteId: form.siteId,
-        name: form.name,
-        description: form.description || undefined,
-        defaultStrategy: form.defaultStrategy,
-        notes: form.notes || undefined,
+        siteId:                      form.siteId,
+        name:                        form.name,
+        description:                 form.description || undefined,
+        defaultStrategy:             form.defaultStrategy,
+        baseCurrency:                form.baseCurrency.toUpperCase(),
+        averagePurchaseLookbackDays: form.averagePurchaseLookbackDays,
+        notes:                       form.notes || undefined,
       }),
     })
     const json = await res.json()
     if (!res.ok) { setError(json.error); return }
     setShowCreate(false)
-    setForm({ siteId: '', name: '', description: '', defaultStrategy: 'BOM_ROLLUP', notes: '' })
+    setForm({ siteId: '', name: '', description: '', defaultStrategy: 'BOM_ROLLUP', notes: '', baseCurrency: 'EUR', averagePurchaseLookbackDays: 365 })
     await load()
     openDetail(json.data.id)
   }
@@ -203,6 +215,22 @@ export default function CostBuildsPage() {
                   {STRATEGIES.map(s => <option key={s.value} value={s.value}>{s.label} — {s.desc}</option>)}
                 </select>
               </div>
+              <div>
+                <label style={labelStyle}>Currency *</label>
+                <input value={form.baseCurrency} onChange={e => setForm(f => ({ ...f, baseCurrency: e.target.value.toUpperCase().slice(0, 3) }))} maxLength={3} placeholder="EUR" style={iStyle} />
+                <div style={{ fontSize: '11px', color: D.secondary, marginTop: '3px' }}>
+                  Cost set reporting currency.{form.defaultStrategy === 'AVERAGE_PURCHASE' ? ' Average Purchase filters ERP records by this currency.' : ''}
+                </div>
+              </div>
+              {form.defaultStrategy === 'AVERAGE_PURCHASE' && (
+                <div>
+                  <label style={labelStyle}>Lookback Window *</label>
+                  <select value={form.averagePurchaseLookbackDays} onChange={e => setForm(f => ({ ...f, averagePurchaseLookbackDays: Number(e.target.value) }))} style={iStyle}>
+                    {LOOKBACK_OPTIONS.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                  </select>
+                  <div style={{ fontSize: '11px', color: D.secondary, marginTop: '3px' }}>Frozen into build snapshot for reproducibility.</div>
+                </div>
+              )}
               <div>
                 <label style={labelStyle}>Description</label>
                 <input value={form.description} onChange={e => setForm(f => ({ ...f, description: e.target.value }))} placeholder="Optional" style={iStyle} />

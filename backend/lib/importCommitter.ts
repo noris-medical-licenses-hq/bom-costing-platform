@@ -18,11 +18,23 @@ export interface PriceListQualityMetrics {
   effectiveDate:      string
 }
 
+export interface PurchaseHistoryQualityMetrics {
+  rowsImported:       number
+  uniqueSkus:         number
+  uniqueSuppliers:    number
+  dateRange:          { min: string; max: string } | null
+  sitesCovered:       number
+  missingSuppliers:   number
+  zeroCostRecords:    number
+  duplicateRefs:      number
+}
+
 export interface CommitResult {
-  committed:      number
-  skipped:        number
-  errors:         Array<{ row: number; error: string }>
-  qualityMetrics?: PriceListQualityMetrics
+  committed:               number
+  skipped:                 number
+  errors:                  Array<{ row: number; error: string }>
+  qualityMetrics?:         PriceListQualityMetrics
+  purchaseHistoryMetrics?: PurchaseHistoryQualityMetrics
 }
 
 // Rows are processed in batches for all DB writes. This keeps individual
@@ -59,6 +71,9 @@ export async function commitImport(
       break
     case 'price_list':
       await commitPriceList(jobId, commitableRows, orgId, userId, result, client)
+      break
+    case 'purchase_history':
+      await commitPurchaseHistory(jobId, commitableRows, orgId, userId, result, client)
       break
     default:
       result.errors.push({ row: 0, error: `Import type "${importType}" commit not yet implemented` })
@@ -639,4 +654,165 @@ async function commitPriceList(
   }).eq('id', versionId)
 
   result.qualityMetrics = metrics
+}
+
+// ─── Purchase History ─────────────────────────────────────────────────────────
+
+async function commitPurchaseHistory(
+  jobId: string,
+  rows: RowValidationResult[],
+  orgId: string,
+  userId: string,
+  result: CommitResult,
+  client: SupabaseServiceClient
+): Promise<void> {
+  const db = client as any
+
+  // Load import job metadata for defaultSiteId
+  const { data: job } = await db.from('import_jobs').select('metadata').eq('id', jobId).single()
+  const meta = (job?.metadata as Record<string, unknown>)?.purchase_history as { defaultSiteId?: string } | undefined
+  const defaultSiteId: string | null = meta?.defaultSiteId ?? null
+
+  // Collect all unique lookup keys
+  const partNumbers  = new Set<string>()
+  const siteCodes    = new Set<string>()
+  const supplierCodes = new Set<string>()
+
+  for (const r of rows) {
+    const pn = String(r.mappedData['sku_part_number'] ?? '').trim()
+    if (pn) partNumbers.add(pn)
+    const sc = String(r.mappedData['site_code'] ?? '').trim()
+    if (sc) siteCodes.add(sc)
+    const sup = String(r.mappedData['supplier_code'] ?? '').trim()
+    if (sup) supplierCodes.add(sup)
+  }
+
+  // Parallel lookups: SKUs, sites, suppliers
+  const [skuRows, siteRows, supplierRows] = await Promise.all([
+    partNumbers.size > 0
+      ? db.from('skus').select('id, part_number').eq('organization_id', orgId).in('part_number', Array.from(partNumbers))
+      : Promise.resolve({ data: [] }),
+    siteCodes.size > 0
+      ? db.from('sites').select('id, code').eq('organization_id', orgId).in('code', Array.from(siteCodes))
+      : Promise.resolve({ data: [] }),
+    supplierCodes.size > 0
+      ? db.from('suppliers').select('id, code').eq('organization_id', orgId).in('code', Array.from(supplierCodes))
+      : Promise.resolve({ data: [] }),
+  ])
+
+  const skuMap = new Map<string, string>()
+  for (const s of skuRows.data ?? []) skuMap.set(s.part_number, s.id)
+
+  const siteMap = new Map<string, string>()
+  for (const s of siteRows.data ?? []) siteMap.set(s.code, s.id)
+
+  const supplierMap = new Map<string, string>()
+  for (const s of supplierRows.data ?? []) supplierMap.set(s.code, s.id)
+
+  // Quality metric counters
+  const importedSkuIds   = new Set<string>()
+  const importedSiteIds  = new Set<string>()
+  const importedSupIds   = new Set<string>()
+  const seenRefs         = new Set<string>()
+  let missingSuppliers   = 0
+  let zeroCostRecords    = 0
+  let duplicateRefs      = 0
+  let minDate: string | null = null
+  let maxDate: string | null = null
+
+  const toInsert: Array<Record<string, unknown> & { _rowNumber: number }> = []
+
+  for (const r of rows) {
+    const partNum = String(r.mappedData['sku_part_number'] ?? '').trim()
+    const skuId   = skuMap.get(partNum)
+    if (!skuId) {
+      result.errors.push({ row: r.rowNumber, error: `SKU "${partNum}" not found in system — import via SKU Master first` })
+      result.skipped++
+      continue
+    }
+
+    // Resolve site: row-level site_code takes priority over default
+    const siteCodeRaw = String(r.mappedData['site_code'] ?? '').trim()
+    let siteId: string | null = null
+    if (siteCodeRaw) {
+      siteId = siteMap.get(siteCodeRaw) ?? null
+      if (!siteId) {
+        result.errors.push({ row: r.rowNumber, error: `Site code "${siteCodeRaw}" not found` })
+        result.skipped++
+        continue
+      }
+    } else if (defaultSiteId) {
+      siteId = defaultSiteId
+    } else {
+      result.errors.push({ row: r.rowNumber, error: 'No site_code in row and no default site selected' })
+      result.skipped++
+      continue
+    }
+
+    const supplierCodeRaw = String(r.mappedData['supplier_code'] ?? '').trim()
+    const supplierId: string | null = supplierCodeRaw ? (supplierMap.get(supplierCodeRaw) ?? null) : null
+    if (supplierCodeRaw && !supplierId) missingSuppliers++
+
+    const purchaseDate = String(r.mappedData['purchase_date'] ?? '').trim()
+    const unitCost     = Number(r.mappedData['unit_cost'])
+    const quantity     = Number(r.mappedData['quantity'])
+    const currency     = String(r.mappedData['currency'] ?? '').toUpperCase().trim()
+    const srcSystem    = String(r.mappedData['source_system'] ?? '').trim() || null
+    const srcRef       = String(r.mappedData['source_reference'] ?? '').trim() || null
+
+    if (unitCost === 0) zeroCostRecords++
+
+    // Track date range
+    if (!minDate || purchaseDate < minDate) minDate = purchaseDate
+    if (!maxDate || purchaseDate > maxDate) maxDate = purchaseDate
+
+    // Detect duplicate source references within this import
+    if (srcRef) {
+      const refKey = `${srcSystem ?? ''}|${srcRef}`
+      if (seenRefs.has(refKey)) { duplicateRefs++ }
+      else { seenRefs.add(refKey) }
+    }
+
+    importedSkuIds.add(skuId)
+    importedSiteIds.add(siteId)
+    if (supplierId) importedSupIds.add(supplierId)
+
+    toInsert.push({
+      organization_id:  orgId,
+      site_id:          siteId,
+      sku_id:           skuId,
+      supplier_id:      supplierId,
+      purchase_date:    purchaseDate,
+      quantity,
+      unit_cost:        unitCost,
+      currency,
+      source_system:    srcSystem,
+      source_reference: srcRef,
+      import_job_id:    jobId,
+      created_by:       userId,
+      _rowNumber:       r.rowNumber,
+    })
+  }
+
+  for (let i = 0; i < toInsert.length; i += DB_BATCH) {
+    const batch = toInsert.slice(i, i + DB_BATCH)
+    const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
+    const { error } = await db.from('purchase_history').insert(insertBatch)
+    if (error) {
+      for (const r of batch) result.errors.push({ row: r._rowNumber as number, error: error.message })
+    } else {
+      result.committed += batch.length
+    }
+  }
+
+  result.purchaseHistoryMetrics = {
+    rowsImported:    result.committed,
+    uniqueSkus:      importedSkuIds.size,
+    uniqueSuppliers: importedSupIds.size,
+    dateRange:       minDate && maxDate ? { min: minDate, max: maxDate } : null,
+    sitesCovered:    importedSiteIds.size,
+    missingSuppliers,
+    zeroCostRecords,
+    duplicateRefs,
+  }
 }

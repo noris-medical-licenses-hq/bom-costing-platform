@@ -35,6 +35,7 @@ const IMPORT_TYPES: ImportTypeSummary[] = [
   { type: 'costs',                label: 'Costs',               description: 'Material costs with currency, cost set, breakdown fields. All-or-nothing.', allOrNothing: true },
   { type: 'inventory_snapshot',   label: 'Inventory Snapshot',  description: 'On-hand quantities with warehouse, bin, lot, traceability and dates.' },
   { type: 'price_list',           label: 'Price List',          description: 'Standard price list (supports auto-detection of name, country, currency from header rows). Creates a Cost Set.' },
+  { type: 'purchase_history',     label: 'Purchase History',    description: 'ERP purchase records for LAST_PURCHASE and AVERAGE_PURCHASE costing strategies. Include site_code or select a default site.' },
   { type: 'supplier_prices',      label: 'Supplier Prices',     description: 'Quoted / contracted prices per SKU per supplier.' },
   { type: 'manufacturing_orders', label: 'Manufacturing Orders', description: 'Production / work orders with operations and execution data.' },
   { type: 'projects',             label: 'Projects',            description: 'Project and customer master data.' },
@@ -63,9 +64,21 @@ interface PriceListQualityMetrics {
   versionNumber: number; effectiveDate: string
 }
 
+interface PurchaseHistoryQualityMetrics {
+  rowsImported:    number
+  uniqueSkus:      number
+  uniqueSuppliers: number
+  dateRange:       { min: string; max: string } | null
+  sitesCovered:    number
+  missingSuppliers: number
+  zeroCostRecords: number
+  duplicateRefs:   number
+}
+
 interface CommitSummary {
   committed: number; skipped: number; errors: Array<{ row: number; error: string }>
-  qualityMetrics?: PriceListQualityMetrics | null
+  qualityMetrics?:         PriceListQualityMetrics | null
+  purchaseHistoryMetrics?: PurchaseHistoryQualityMetrics | null
 }
 
 // ─── Field catalog helpers ────────────────────────────────────────────────────
@@ -492,6 +505,8 @@ export default function ImportsPage() {
   const [showCustomModal,   setShowCustomModal]   = useState(false)
   const [detectedPriceList, setDetectedPriceList] = useState<DetectedPriceList | null>(null)
   const [priceListEffDate,  setPriceListEffDate]  = useState<string>(new Date().toISOString().slice(0, 10))
+  const [purchaseSiteId,    setPurchaseSiteId]    = useState<string>('')
+  const [purchaseSites,     setPurchaseSites]     = useState<Array<{ id: string; name: string; code: string }>>([])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef     = useRef(false)
 
@@ -510,6 +525,9 @@ export default function ImportsPage() {
     setImportType(def)
     setStep('upload')
     setError(null)
+    if (def.type === 'purchase_history' && purchaseSites.length === 0) {
+      fetch('/api/sites').then(r => r.json()).then(d => setPurchaseSites(d.data ?? [])).catch(() => {})
+    }
   }
 
   async function handleFileChange(e: React.ChangeEvent<HTMLInputElement>) {
@@ -574,6 +592,9 @@ export default function ImportsPage() {
         body: JSON.stringify({
           importType: importType.type, fileName, mapping, totalRows: rows.length,
           ...(detectedPriceList ? { priceListMeta: { ...detectedPriceList, effectiveDate: priceListEffDate } } : {}),
+          ...(importType.type === 'purchase_history' && purchaseSiteId
+            ? { purchaseHistoryMeta: { defaultSiteId: purchaseSiteId } }
+            : {}),
         }),
       })
       const startData = await startRes.json()
@@ -630,6 +651,7 @@ export default function ImportsPage() {
     setProgress(null); setSaveTemplate(false); setTemplateName(''); setError(null)
     setDetectedPriceList(null)
     setPriceListEffDate(new Date().toISOString().slice(0, 10))
+    setPurchaseSiteId('')
     abortRef.current = false
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -714,6 +736,31 @@ export default function ImportsPage() {
       {/* ── Mapping ───────────────────────────────────────────────────────── */}
       {step === 'mapping' && importType && (
         <div>
+          {/* Purchase history: default site selector (shown if site_code column not detected) */}
+          {importType?.type === 'purchase_history' && !Object.values(mapping).includes('site_code') && (
+            <div style={{ background: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '8px', padding: '14px 18px', marginBottom: '20px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: '#1565c0', marginBottom: '6px' }}>
+                No site_code column detected
+              </div>
+              <div style={{ fontSize: '13px', color: '#1e3a5f', marginBottom: '10px' }}>
+                Select a default site — all imported rows will be assigned to it.
+                If your file has a site column, map it to <strong>Site Code</strong> instead.
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, color: '#1565c0', whiteSpace: 'nowrap' }}>Default Site</label>
+                <select
+                  value={purchaseSiteId}
+                  onChange={e => setPurchaseSiteId(e.target.value)}
+                  style={{ fontSize: '13px', padding: '5px 8px', border: '1px solid #93C5FD', borderRadius: '4px', background: '#fff', color: '#1e3a5f' }}
+                >
+                  <option value="">— select site —</option>
+                  {purchaseSites.map(s => <option key={s.id} value={s.id}>{s.name} ({s.code})</option>)}
+                </select>
+                {purchaseSiteId && <span style={{ fontSize: '12px', color: '#16a34a' }}>✓ Site selected</span>}
+              </div>
+            </div>
+          )}
+
           {/* Price list format detection banner */}
           {detectedPriceList && (
             <div style={{ background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', padding: '14px 18px', marginBottom: '20px' }}>
@@ -970,6 +1017,59 @@ export default function ImportsPage() {
             </div>
           )}
 
+          {/* Purchase history quality dashboard */}
+          {commitResult.purchaseHistoryMetrics && (
+            <div style={{ textAlign: 'left', background: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '8px', padding: '16px 20px', marginBottom: '24px' }}>
+              <div style={{ fontSize: '14px', fontWeight: 700, color: '#1565c0', marginBottom: '12px' }}>
+                Purchase History — Data Quality Dashboard
+              </div>
+              {commitResult.purchaseHistoryMetrics.dateRange && (
+                <div style={{ fontSize: '12px', color: '#1e3a5f', marginBottom: '12px' }}>
+                  Date range: {commitResult.purchaseHistoryMetrics.dateRange.min} → {commitResult.purchaseHistoryMetrics.dateRange.max}
+                </div>
+              )}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '10px' }}>
+                {[
+                  { label: 'Rows Imported',       value: fmtNum(commitResult.purchaseHistoryMetrics.rowsImported),    color: '#1565c0' },
+                  { label: 'Unique SKUs',          value: fmtNum(commitResult.purchaseHistoryMetrics.uniqueSkus),      color: D.success },
+                  { label: 'Unique Suppliers',     value: fmtNum(commitResult.purchaseHistoryMetrics.uniqueSuppliers), color: D.success },
+                  { label: 'Sites Covered',        value: fmtNum(commitResult.purchaseHistoryMetrics.sitesCovered),    color: D.success },
+                  { label: 'Missing Suppliers',    value: fmtNum(commitResult.purchaseHistoryMetrics.missingSuppliers),color: commitResult.purchaseHistoryMetrics.missingSuppliers > 0 ? D.warning : D.success },
+                  { label: 'Zero-Cost Records',    value: fmtNum(commitResult.purchaseHistoryMetrics.zeroCostRecords), color: commitResult.purchaseHistoryMetrics.zeroCostRecords > 0 ? D.warning : D.success },
+                  { label: 'Duplicate References', value: fmtNum(commitResult.purchaseHistoryMetrics.duplicateRefs),   color: commitResult.purchaseHistoryMetrics.duplicateRefs > 0 ? D.warning : D.success },
+                ].map(m => (
+                  <div key={m.label} style={{ background: '#fff', borderRadius: '6px', padding: '8px 12px' }}>
+                    <div style={{ fontSize: '18px', fontWeight: 700, color: m.color }}>{m.value}</div>
+                    <div style={{ fontSize: '11px', color: '#1e3a5f' }}>{m.label}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Next step CTA for purchase history imports */}
+          {commitResult.purchaseHistoryMetrics && (
+            <div style={{ textAlign: 'left', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                  Next Step · Run Cost Build
+                </div>
+                <div style={{ fontSize: '15px', fontWeight: 700, color: D.dark, marginBottom: '4px' }}>
+                  Purchase history is ready for costing
+                </div>
+                <div style={{ fontSize: '13px', color: D.secondary }}>
+                  Create a Cost Build with strategy <strong>Last Purchase</strong> or <strong>Average Purchase</strong> to use this data.
+                </div>
+              </div>
+              <a
+                href="/cost-builds"
+                style={{ background: '#16a34a', color: '#fff', textDecoration: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: 700, fontSize: '14px', whiteSpace: 'nowrap', flexShrink: 0 }}
+              >
+                Create Cost Build →
+              </a>
+            </div>
+          )}
+
           {/* Next step CTA for price list imports */}
           {commitResult.qualityMetrics && (
             <div style={{ textAlign: 'left', background: '#EFF6FF', border: '1px solid #93C5FD', borderRadius: '8px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
@@ -1045,7 +1145,7 @@ function ImportHistory() {
     } finally { setLoading(false) }
   }
 
-  const LABELS: Record<string, string> = { sku_master: 'SKU Master', bom_lines: 'BOM Lines', costs: 'Costs', inventory_snapshot: 'Inventory', price_list: 'Price List', supplier_prices: 'Supplier Prices', manufacturing_orders: 'Mfg Orders', projects: 'Projects' }
+  const LABELS: Record<string, string> = { sku_master: 'SKU Master', bom_lines: 'BOM Lines', costs: 'Costs', inventory_snapshot: 'Inventory', price_list: 'Price List', purchase_history: 'Purchase History', supplier_prices: 'Supplier Prices', manufacturing_orders: 'Mfg Orders', projects: 'Projects' }
   const SCOLOR: Record<string, string> = { committed: D.success, validated: D.warning, uploading: '#1565c0', failed: D.error, pending: D.secondary, cancelled: D.secondary }
 
   return (

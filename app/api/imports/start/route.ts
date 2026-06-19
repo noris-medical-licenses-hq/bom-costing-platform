@@ -8,7 +8,7 @@ const Schema = z.object({
     'sku_master', 'bom_lines', 'costs', 'inventory_snapshot',
     'supplier_prices', 'suppliers', 'sites', 'warehouses',
     'cost_rules', 'rule_exceptions', 'virtual_components',
-    'price_list',
+    'price_list', 'purchase_history',
   ]),
   fileName:       z.string(),
   mapping:        z.record(z.string()),
@@ -17,7 +17,10 @@ const Schema = z.object({
     priceListName:  z.string().optional(),
     targetCountry:  z.string().optional(),
     currency:       z.string().optional(),
-    effectiveDate:  z.string().optional(),  // ISO date, e.g. "2026-07-01"
+    effectiveDate:  z.string().optional(),
+  }).optional(),
+  purchaseHistoryMeta: z.object({
+    defaultSiteId: z.string().uuid().optional(),
   }).optional(),
 })
 
@@ -45,7 +48,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })
     }
 
-    const { importType, fileName, mapping, totalRows, priceListMeta } = parsed.data
+    const { importType, fileName, mapping, totalRows, priceListMeta, purchaseHistoryMeta } = parsed.data
 
     const svc = createServiceSupabaseClient()
     const svcDb = svc as any
@@ -62,7 +65,11 @@ export async function POST(request: NextRequest) {
       error_rows:      0,
       mapping:         mapping,
       created_by:      user.id,
-      metadata:        priceListMeta ? { price_list: priceListMeta } : null,
+      metadata:        priceListMeta
+        ? { price_list: priceListMeta }
+        : purchaseHistoryMeta
+        ? { purchase_history: purchaseHistoryMeta }
+        : null,
     }).select('id').single()
 
     if (error || !job) {
