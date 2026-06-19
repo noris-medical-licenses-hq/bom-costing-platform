@@ -38,6 +38,10 @@ export async function POST(request: NextRequest) {
     const { data: { user } } = await client.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    const roleResult = await (client as any).rpc('auth_user_role').maybeSingle()
+    const callerRole = (roleResult.data as string | null) ?? ''
+    if (callerRole !== 'admin') return NextResponse.json({ error: 'Admin role required' }, { status: 403 })
+
     const body = await request.json()
     const parsed = CreateSchema.safeParse(body)
     if (!parsed.success) return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })

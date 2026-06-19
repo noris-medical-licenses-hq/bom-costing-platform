@@ -15,16 +15,17 @@ export async function GET() {
     const { data: { user } } = await client.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    const roleResult = await (client as any).rpc('auth_user_role').maybeSingle()
+    const callerRole = (roleResult.data as string | null) ?? ''
+    if (callerRole !== 'admin') return NextResponse.json({ error: 'Admin role required' }, { status: 403 })
+
     const db = client as any
     const { data, error } = await db
       .from('profiles')
       .select('id, full_name, email, role, is_active, last_seen_at, created_at, invited_by')
       .order('full_name', { ascending: true })
 
-    if (error) {
-      if (error.code === '42501') return NextResponse.json({ error: 'Insufficient permissions — admin role required' }, { status: 403 })
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
     return NextResponse.json({ data: data ?? [] })
   } catch (err) {
@@ -92,7 +93,7 @@ export async function POST(request: NextRequest) {
     await svcDb.from('audit_log').insert({
       organization_id: orgId,
       event_type:      'user_invited',
-      event_category:  'security',
+      event_category:  'admin',
       table_name:      'profiles',
       record_id:       newUserId,
       performed_by:    user.id,

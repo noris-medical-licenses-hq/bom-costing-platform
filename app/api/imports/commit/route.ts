@@ -24,6 +24,12 @@ export async function POST(request: NextRequest) {
     const orgId = (orgIdResult.data as string | null) ?? ''
     if (!orgId) return NextResponse.json({ error: 'No organization found' }, { status: 403 })
 
+    const roleResult = await (client as any).rpc('auth_user_role').maybeSingle()
+    const callerRole = (roleResult.data as string | null) ?? ''
+    if (!['editor', 'cost_analyst', 'procurement', 'approver', 'admin'].includes(callerRole)) {
+      return NextResponse.json({ error: 'editor role or above required to commit imports' }, { status: 403 })
+    }
+
     const body = await request.json()
     const parsed = Schema.safeParse(body)
     if (!parsed.success) {

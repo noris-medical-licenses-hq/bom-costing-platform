@@ -60,6 +60,11 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
 
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
+    // Revoke all active sessions when deactivating a user
+    if (parsed.data.is_active === false && current.is_active) {
+      await svc.auth.admin.signOut(params.id).catch(() => {})
+    }
+
     // Determine audit event type
     let eventType = 'data_update'
     if (parsed.data.role !== undefined && parsed.data.role !== current.role) eventType = 'user_role_changed'
@@ -69,7 +74,7 @@ export async function PATCH(request: NextRequest, { params }: RouteParams) {
     await svcDb.from('audit_log').insert({
       organization_id: orgId,
       event_type:      eventType,
-      event_category:  'security',
+      event_category:  'admin',
       table_name:      'profiles',
       record_id:       params.id,
       performed_by:    user.id,

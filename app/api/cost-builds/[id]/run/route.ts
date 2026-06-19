@@ -11,6 +11,12 @@ export async function POST(
     const { data: { user } } = await client.auth.getUser()
     if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
+    const roleResult = await (client as any).rpc('auth_user_role').maybeSingle()
+    const callerRole = (roleResult.data as string | null) ?? ''
+    if (!['cost_analyst', 'approver', 'admin'].includes(callerRole)) {
+      return NextResponse.json({ error: 'cost_analyst, approver, or admin role required' }, { status: 403 })
+    }
+
     const orgIdResult = await (client as any).rpc('auth_org_id').maybeSingle()
     const orgId = (orgIdResult.data as string | null) ?? ''
     if (!orgId) return NextResponse.json({ error: 'No organization found' }, { status: 403 })

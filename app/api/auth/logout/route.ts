@@ -13,7 +13,7 @@ export async function POST() {
       await svc.from('audit_log').insert({
         organization_id: orgId,
         event_type:      'user_logout',
-        event_category:  'auth',
+        event_category:  'admin',
         table_name:      'profiles',
         record_id:       user.id,
         performed_by:    user.id,
