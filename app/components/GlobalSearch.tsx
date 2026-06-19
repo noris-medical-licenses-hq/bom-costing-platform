@@ -105,7 +105,7 @@ export function GlobalSearch() {
           boxShadow: '0 8px 24px rgba(0,0,0,0.12)', zIndex: 500, padding: '14px',
           fontSize: '13px', color: '#999', textAlign: 'center',
         }}>
-          No results for "{q}"
+          No results for &ldquo;{q}&rdquo;
         </div>
       )}
     </div>

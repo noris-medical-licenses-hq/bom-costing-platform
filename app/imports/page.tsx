@@ -626,7 +626,7 @@ export default function ImportsPage() {
       }
     } catch { setError('Upload failed. Please try again.') }
     finally { setUploading(false) }
-  }, [importType, rows, fileName, mapping, detectedPriceList, priceListEffDate])
+  }, [importType, rows, fileName, mapping, detectedPriceList, priceListEffDate, purchaseSiteId])
 
   async function handleCommit() {
     if (!validation) return

@@ -163,7 +163,7 @@ export default function FxRatesPage() {
 
       {/* Usage note */}
       <div style={{ background: D.blueLight, border: `1px solid #BFDBFE`, borderRadius: '8px', padding: '14px 16px', marginBottom: '20px', fontSize: '13px', color: '#1e40af' }}>
-        <strong>How these rates are used:</strong> When running a valuation with FX source = "corporate", the engine copies the latest effective rate for each currency pair. Rates here do not affect historical reports that have already been run.
+        <strong>How these rates are used:</strong> When running a valuation with FX source = &ldquo;corporate&rdquo;, the engine copies the latest effective rate for each currency pair. Rates here do not affect historical reports that have already been run.
       </div>
 
       {/* Filter */}
@@ -178,7 +178,7 @@ export default function FxRatesPage() {
         <p style={{ color: D.secondary, fontSize: '14px' }}>Loading rates…</p>
       ) : rates.length === 0 ? (
         <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '10px', padding: '40px', textAlign: 'center', color: D.secondary, fontSize: '14px' }}>
-          No FX rates configured. Click "Add Rate" to enter your first exchange rate.
+          No FX rates configured. Click &ldquo;Add Rate&rdquo; to enter your first exchange rate.
         </div>
       ) : (
         Object.entries(grouped).map(([ccy, group]) => (
