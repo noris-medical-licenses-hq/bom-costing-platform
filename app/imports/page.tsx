@@ -994,6 +994,29 @@ export default function ImportsPage() {
             </div>
           )}
 
+          {/* Next step CTA for inventory_snapshot imports */}
+          {importType?.type === 'inventory_snapshot' && !commitResult.qualityMetrics && (
+            <div style={{ textAlign: 'left', background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', padding: '16px 20px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+              <div style={{ flex: 1 }}>
+                <div style={{ fontSize: '11px', fontWeight: 700, color: '#166534', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+                  Next Step · Value Inventory
+                </div>
+                <div style={{ fontSize: '15px', fontWeight: 700, color: D.dark, marginBottom: '4px' }}>
+                  Your inventory is ready to value
+                </div>
+                <div style={{ fontSize: '13px', color: D.secondary }}>
+                  Inventory quantities imported. Go to Inventory Snapshots and click <strong>Value Inventory</strong> to compute stock values using your approved Cost Build.
+                </div>
+              </div>
+              <a
+                href="/inventory"
+                style={{ background: '#16a34a', color: '#fff', textDecoration: 'none', padding: '10px 20px', borderRadius: '6px', fontWeight: 700, fontSize: '14px', whiteSpace: 'nowrap', flexShrink: 0 }}
+              >
+                Value Inventory →
+              </a>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
             <button onClick={reset} style={{ fontSize: '14px', padding: '8px 24px', background: D.red, color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>New import</button>
             <a href="/audit" style={{ fontSize: '14px', padding: '8px 24px', border: `1px solid ${D.border}`, borderRadius: '6px', background: D.card, color: D.dark, textDecoration: 'none', display: 'inline-block' }}>View audit log</a>

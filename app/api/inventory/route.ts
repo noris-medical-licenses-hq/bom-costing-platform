@@ -18,15 +18,89 @@ const CreateSnapshotSchema = z.object({
 export async function GET(request: NextRequest) {
   try {
     const client = await createServerSupabaseClient()
+    const { data: { user } } = await client.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
     const { searchParams } = new URL(request.url)
-    const snapshots = await listSnapshots({
-      status: (searchParams.get('status') as 'draft' | 'under_review' | 'approved' | 'superseded' | 'archived' | null) ?? undefined,
-      snapshot_type: (searchParams.get('type') as 'full' | 'site' | 'warehouse' | 'project' | null) ?? undefined,
-      from: searchParams.get('from') ?? undefined,
-      to: searchParams.get('to') ?? undefined,
-    }, client)
-    return NextResponse.json({ data: snapshots })
-  } catch {
+    const enriched = searchParams.get('enriched') === 'true'
+
+    if (!enriched) {
+      // Fast path: plain snapshot list (legacy consumers)
+      const snapshots = await listSnapshots({
+        status: (searchParams.get('status') as 'draft' | 'under_review' | 'approved' | 'superseded' | 'archived' | null) ?? undefined,
+        snapshot_type: (searchParams.get('type') as 'full' | 'site' | 'warehouse' | 'project' | null) ?? undefined,
+        from: searchParams.get('from') ?? undefined,
+        to: searchParams.get('to') ?? undefined,
+      }, client)
+      return NextResponse.json({ data: snapshots })
+    }
+
+    // ── Enriched path ─────────────────────────────────────────────────────────
+    // Returns snapshots with: site, best_build, latest_valuation
+    const db = client as any
+
+    const { data: snaps, error: snapsErr } = await db
+      .from('inventory_snapshots')
+      .select('id, snapshot_name, snapshot_date, snapshot_type, status, base_currency, line_count, total_value, missing_cost_count, scope_site_id, cost_set_id, created_at')
+      .order('snapshot_date', { ascending: false })
+
+    if (snapsErr) return NextResponse.json({ error: snapsErr.message }, { status: 500 })
+    const snapshots: any[] = snaps ?? []
+    if (snapshots.length === 0) return NextResponse.json({ data: [] })
+
+    const siteIds      = [...new Set(snapshots.map(s => s.scope_site_id).filter(Boolean))] as string[]
+    const snapshotIds  = snapshots.map(s => s.id) as string[]
+
+    // Parallel: fetch sites, best builds per site, latest valuation per snapshot
+    const [sitesRes, buildsRes, valRes] = await Promise.all([
+      siteIds.length > 0
+        ? db.from('sites').select('id, name, code, country').in('id', siteIds)
+        : Promise.resolve({ data: [] }),
+
+      siteIds.length > 0
+        ? db.from('site_cost_builds')
+            .select('id, name, status, site_id, cost_sets(id, name, base_currency)')
+            .in('site_id', siteIds)
+            .in('status', ['approved', 'locked', 'complete'])
+            .order('created_at', { ascending: false })
+        : Promise.resolve({ data: [] }),
+
+      db.from('valuation_reports')
+        .select('id, snapshot_id, status, total_value, base_currency, valuation_currency, created_at')
+        .in('snapshot_id', snapshotIds)
+        .order('created_at', { ascending: false }),
+    ])
+
+    // Build lookup maps
+    const sitesById: Record<string, any> = {}
+    for (const s of sitesRes.data ?? []) sitesById[s.id] = s
+
+    // Best build per site: priority approved > locked > complete
+    const PRIORITY: Record<string, number> = { approved: 3, locked: 2, complete: 1 }
+    const bestBuildBySite: Record<string, any> = {}
+    for (const b of buildsRes.data ?? []) {
+      const current = bestBuildBySite[b.site_id]
+      if (!current || (PRIORITY[b.status] ?? 0) > (PRIORITY[current.status] ?? 0)) {
+        bestBuildBySite[b.site_id] = b
+      }
+    }
+
+    // Latest valuation per snapshot
+    const latestValBySnap: Record<string, any> = {}
+    for (const v of valRes.data ?? []) {
+      if (!latestValBySnap[v.snapshot_id]) latestValBySnap[v.snapshot_id] = v
+    }
+
+    const enrichedData = snapshots.map(snap => ({
+      ...snap,
+      site:              snap.scope_site_id ? (sitesById[snap.scope_site_id] ?? null) : null,
+      best_build:        snap.scope_site_id ? (bestBuildBySite[snap.scope_site_id] ?? null) : null,
+      latest_valuation:  latestValBySnap[snap.id] ?? null,
+    }))
+
+    return NextResponse.json({ data: enrichedData })
+  } catch (err) {
+    console.error('[GET /api/inventory]', err)
     return NextResponse.json({ error: 'Failed to fetch inventory snapshots' }, { status: 500 })
   }
 }

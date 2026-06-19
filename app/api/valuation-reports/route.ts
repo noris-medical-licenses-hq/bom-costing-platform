@@ -36,6 +36,7 @@ export async function GET(request: NextRequest) {
 
     const db = client as any
     const snapshotId = request.nextUrl.searchParams.get('snapshotId')
+    const limit      = parseInt(request.nextUrl.searchParams.get('limit') ?? '100', 10)
 
     let q = db
       .from('valuation_reports')
@@ -48,6 +49,7 @@ export async function GET(request: NextRequest) {
         cost_sets(name, base_currency)
       `)
       .order('created_at', { ascending: false })
+      .limit(limit)
 
     if (snapshotId) q = q.eq('snapshot_id', snapshotId)
 

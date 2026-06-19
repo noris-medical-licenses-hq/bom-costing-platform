@@ -5,37 +5,220 @@ const D = {
   red: '#C62839', dark: '#222222', secondary: '#666666',
   bg: '#F8F9FA', card: '#FFFFFF', border: '#E5E7EB',
   success: '#16a34a', warning: '#d97706', error: '#dc2626',
+  blue: '#1565c0', teal: '#0d9488',
+  successLight: '#F0FDF4', blueLight: '#EFF6FF', warnLight: '#FFFBEB',
 }
 
 const STATUS_COLOR: Record<string, string> = {
   draft: D.secondary, under_review: D.warning, approved: D.success, superseded: D.secondary, archived: D.secondary,
 }
-
-type Snapshot = {
-  id: string; snapshot_name: string; snapshot_date: string; snapshot_type: string
-  status: string; total_value: number | null; total_quantity: number | null
-  line_count: number | null; missing_cost_count: number | null; base_currency: string
+const VAL_STATUS_COLOR: Record<string, string> = {
+  draft: D.secondary, running: D.warning, complete: D.success, approved: D.blue, locked: D.dark, failed: D.error,
 }
-type CostSet = { id: string; name: string; base_currency: string }
+
+type Site      = { id: string; name: string; code: string; country: string | null }
+type BestBuild = { id: string; name: string; status: string; site_id: string; cost_sets: { id: string; name: string; base_currency: string } | null }
+type LatestVal = { id: string; snapshot_id: string; status: string; total_value: number | null; valuation_currency: string; created_at: string }
+type CostSet   = { id: string; name: string; base_currency: string }
+
+type EnrichedSnapshot = {
+  id: string; snapshot_name: string; snapshot_date: string; snapshot_type: string
+  status: string; base_currency: string; line_count: number | null
+  total_value: number | null; missing_cost_count: number | null
+  scope_site_id: string | null; cost_set_id: string
+  site: Site | null
+  best_build: BestBuild | null
+  latest_valuation: LatestVal | null
+}
+
+// ─── Smart Valuation Wizard ───────────────────────────────────────────────────
+
+type WizardState =
+  | { phase: 'idle' }
+  | { phase: 'confirm'; snap: EnrichedSnapshot }
+  | { phase: 'running'; snap: EnrichedSnapshot }
+  | { phase: 'done'; snap: EnrichedSnapshot; reportId: string; totalValue: number | null; lineCount: number | null; missingCostCount: number | null; currency: string }
+  | { phase: 'error'; snap: EnrichedSnapshot; message: string }
+
+function fmtVal(v: number | null, ccy?: string) {
+  if (v == null) return '—'
+  return (ccy ? ccy + ' ' : '') + v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+function fmtDate(s: string) {
+  return new Date(s).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function WizardModal({ state, onConfirm, onClose, onRun, overrideCurrency, setOverrideCurrency }: {
+  state: WizardState
+  onConfirm: () => void
+  onClose: () => void
+  onRun: () => void
+  overrideCurrency: string
+  setOverrideCurrency: (c: string) => void
+}) {
+  if (state.phase === 'idle') return null
+  const snap  = 'snap' in state ? state.snap : null
+  const build = snap?.best_build ?? null
+  const suggestedCcy = build?.cost_sets?.base_currency ?? snap?.base_currency ?? 'EUR'
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.45)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+      <div style={{ background: D.card, borderRadius: '10px', width: '100%', maxWidth: '480px', boxShadow: '0 20px 60px rgba(0,0,0,0.25)', overflow: 'hidden' }}>
+
+        {/* Header */}
+        <div style={{ padding: '18px 24px', borderBottom: `1px solid ${D.border}`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: D.secondary, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2px' }}>Step 4 of 4</div>
+            <div style={{ fontSize: '17px', fontWeight: 700, color: D.dark }}>Value Inventory</div>
+          </div>
+          {state.phase !== 'running' && (
+            <button onClick={onClose} style={{ fontSize: '20px', color: D.secondary, background: 'none', border: 'none', cursor: 'pointer', padding: '2px 6px', lineHeight: 1 }}>×</button>
+          )}
+        </div>
+
+        {/* Body */}
+        <div style={{ padding: '20px 24px' }}>
+
+          {/* Confirm phase */}
+          {state.phase === 'confirm' && (
+            <>
+              <div style={{ marginBottom: '16px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: D.secondary, marginBottom: '4px' }}>SNAPSHOT</div>
+                <div style={{ fontSize: '14px', fontWeight: 600, color: D.dark }}>{snap!.snapshot_name}</div>
+                <div style={{ fontSize: '12px', color: D.secondary }}>{snap!.snapshot_date} · {snap!.line_count?.toLocaleString() ?? 0} lines</div>
+              </div>
+
+              {build ? (
+                <div style={{ marginBottom: '16px', background: D.successLight, border: '1px solid #86EFAC', borderRadius: '8px', padding: '12px 14px' }}>
+                  <div style={{ fontSize: '11px', fontWeight: 600, color: D.secondary, marginBottom: '4px' }}>COST BUILD (auto-detected)</div>
+                  <div style={{ fontSize: '14px', fontWeight: 600, color: D.dark }}>{build.name}</div>
+                  <div style={{ fontSize: '12px', color: D.secondary }}>
+                    {build.cost_sets?.name ?? '—'} · status: <span style={{ color: STATUS_COLOR[build.status] ?? D.secondary, fontWeight: 600 }}>{build.status}</span>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ marginBottom: '16px', background: D.warnLight, border: '1px solid #FDE68A', borderRadius: '8px', padding: '12px 14px', fontSize: '13px', color: '#92400E' }}>
+                  No approved Cost Build found for this site.{' '}
+                  <a href="/cost-builds" style={{ color: D.red, fontWeight: 600 }}>Create one →</a>
+                </div>
+              )}
+
+              <div style={{ marginBottom: '20px' }}>
+                <label style={{ fontSize: '11px', fontWeight: 600, color: D.secondary, display: 'block', marginBottom: '6px' }}>VALUATION CURRENCY</label>
+                <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                  <input
+                    value={overrideCurrency}
+                    onChange={e => setOverrideCurrency(e.target.value.toUpperCase().slice(0, 3))}
+                    maxLength={3}
+                    style={{ width: '80px', padding: '8px 10px', border: `1px solid ${D.border}`, borderRadius: '6px', fontSize: '14px', fontWeight: 600, textAlign: 'center', background: D.card }}
+                  />
+                  {overrideCurrency !== suggestedCcy && (
+                    <button onClick={() => setOverrideCurrency(suggestedCcy)} style={{ fontSize: '12px', color: D.secondary, background: 'none', border: 'none', cursor: 'pointer', textDecoration: 'underline' }}>
+                      Reset to {suggestedCcy}
+                    </button>
+                  )}
+                </div>
+                <div style={{ fontSize: '11px', color: D.secondary, marginTop: '4px' }}>Suggested from Cost Build · {suggestedCcy}</div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '10px' }}>
+                <button
+                  onClick={onRun}
+                  disabled={!build}
+                  style={{ flex: 1, background: build ? D.teal : D.border, color: '#fff', border: 'none', padding: '12px', borderRadius: '6px', fontSize: '15px', fontWeight: 700, cursor: build ? 'pointer' : 'not-allowed' }}
+                >
+                  Run Valuation →
+                </button>
+                <button onClick={onClose} style={{ padding: '12px 16px', border: `1px solid ${D.border}`, borderRadius: '6px', fontSize: '14px', background: D.card, color: D.secondary, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </>
+          )}
+
+          {/* Running phase */}
+          {state.phase === 'running' && (
+            <div style={{ textAlign: 'center', padding: '32px 0' }}>
+              <div style={{ fontSize: '36px', marginBottom: '16px' }}>⚙️</div>
+              <div style={{ fontSize: '16px', fontWeight: 700, color: D.dark, marginBottom: '8px' }}>Running valuation…</div>
+              <div style={{ fontSize: '13px', color: D.secondary }}>Pricing {snap!.line_count?.toLocaleString() ?? 'all'} inventory lines against {build?.name ?? 'Cost Set'}.</div>
+              <div style={{ marginTop: '16px', height: '4px', background: D.border, borderRadius: '2px', overflow: 'hidden' }}>
+                <div style={{ height: '100%', background: D.teal, width: '60%', borderRadius: '2px', animation: 'pulse 1.5s ease-in-out infinite' }} />
+              </div>
+            </div>
+          )}
+
+          {/* Done phase */}
+          {state.phase === 'done' && (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '40px', marginBottom: '12px' }}>✅</div>
+              <div style={{ fontSize: '18px', fontWeight: 700, color: D.dark, marginBottom: '6px' }}>Valuation complete</div>
+              <div style={{ fontSize: '28px', fontWeight: 700, color: D.teal, fontFamily: 'monospace', marginBottom: '4px' }}>
+                {fmtVal(state.totalValue, state.currency)}
+              </div>
+              <div style={{ fontSize: '13px', color: D.secondary, marginBottom: '20px' }}>
+                {state.lineCount?.toLocaleString() ?? 0} lines
+                {(state.missingCostCount ?? 0) > 0 && (
+                  <span style={{ color: D.error }}> · ⚠ {state.missingCostCount} missing costs</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <a
+                  href={`/valuation-reports/${state.reportId}`}
+                  style={{ background: D.teal, color: '#fff', textDecoration: 'none', padding: '10px 24px', borderRadius: '6px', fontSize: '14px', fontWeight: 700 }}
+                >
+                  Open Report →
+                </a>
+                <button onClick={onClose} style={{ padding: '10px 20px', border: `1px solid ${D.border}`, borderRadius: '6px', fontSize: '14px', background: D.card, color: D.secondary, cursor: 'pointer' }}>
+                  Close
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Error phase */}
+          {state.phase === 'error' && (
+            <div style={{ textAlign: 'center' }}>
+              <div style={{ fontSize: '36px', marginBottom: '12px' }}>❌</div>
+              <div style={{ fontSize: '15px', fontWeight: 700, color: D.error, marginBottom: '8px' }}>Valuation failed</div>
+              <div style={{ fontSize: '13px', color: D.secondary, marginBottom: '20px', lineHeight: 1.5 }}>{state.message}</div>
+              <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
+                <button onClick={onConfirm} style={{ background: D.red, color: '#fff', border: 'none', padding: '10px 20px', borderRadius: '6px', fontSize: '14px', fontWeight: 600, cursor: 'pointer' }}>
+                  Try Again
+                </button>
+                <button onClick={onClose} style={{ padding: '10px 16px', border: `1px solid ${D.border}`, borderRadius: '6px', fontSize: '14px', background: D.card, color: D.secondary, cursor: 'pointer' }}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function InventoryPage() {
-  const [snapshots,  setSnapshots]  = useState<Snapshot[]>([])
+  const [snapshots,  setSnapshots]  = useState<EnrichedSnapshot[]>([])
   const [costSets,   setCostSets]   = useState<CostSet[]>([])
   const [loading,    setLoading]    = useState(true)
   const [showCreate, setShowCreate] = useState(false)
-  const [error,      setError]      = useState<string | null>(null)
+  const [formError,  setFormError]  = useState<string | null>(null)
   const [form, setForm] = useState({
     snapshot_name: '', snapshot_date: new Date().toISOString().slice(0, 10),
     snapshot_type: 'full', cost_set_id: '', base_currency: 'EUR',
   })
 
-  const fmtNum = (v: number | null, ccy?: string) =>
-    v != null ? `${ccy ? ccy + ' ' : ''}${v.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'
+  // Wizard state
+  const [wizard, setWizard] = useState<WizardState>({ phase: 'idle' })
+  const [overrideCurrency, setOverrideCurrency] = useState('EUR')
 
   const load = useCallback(async () => {
     setLoading(true)
     const [sRes, csRes] = await Promise.all([
-      fetch('/api/inventory'),
+      fetch('/api/inventory?enriched=true'),
       fetch('/api/cost-sets'),
     ])
     const [sJson, csJson] = await Promise.all([sRes.json(), csRes.json()])
@@ -47,14 +230,59 @@ export default function InventoryPage() {
   useEffect(() => { load() }, [load])
 
   async function handleCreate(e: React.FormEvent) {
-    e.preventDefault(); setError(null)
+    e.preventDefault(); setFormError(null)
     const res = await fetch('/api/inventory', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     })
     const json = await res.json()
     if (res.ok) { setShowCreate(false); load() }
-    else setError(json.error)
+    else setFormError(json.error)
+  }
+
+  function openWizard(snap: EnrichedSnapshot) {
+    const suggestedCcy = snap.best_build?.cost_sets?.base_currency ?? snap.base_currency ?? 'EUR'
+    setOverrideCurrency(suggestedCcy)
+    setWizard({ phase: 'confirm', snap })
+  }
+
+  async function runValuation() {
+    if (wizard.phase !== 'confirm' && wizard.phase !== 'error') return
+    const snap  = wizard.snap
+    const build = snap.best_build
+    if (!build) return
+
+    setWizard({ phase: 'running', snap })
+
+    try {
+      const res = await fetch(`/api/inventory/${snap.id}/quick-value`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ buildId: build.id, currency: overrideCurrency, scenario: 'management' }),
+      })
+      const json = await res.json()
+      if (!res.ok) {
+        setWizard({ phase: 'error', snap, message: json.error ?? 'Valuation failed' })
+        return
+      }
+      setWizard({
+        phase:            'done',
+        snap,
+        reportId:         json.data.reportId,
+        totalValue:       json.data.totalValue,
+        lineCount:        json.data.lineCount,
+        missingCostCount: json.data.missingCostCount,
+        currency:         json.data.currency,
+      })
+      // Refresh list so the "Last Valuation" column updates
+      load()
+    } catch (err) {
+      setWizard({ phase: 'error', snap: wizard.snap, message: String(err) })
+    }
+  }
+
+  function closeWizard() {
+    setWizard({ phase: 'idle' })
   }
 
   const iStyle: React.CSSProperties = {
@@ -67,24 +295,34 @@ export default function InventoryPage() {
 
   return (
     <div>
+      {/* Wizard overlay */}
+      <WizardModal
+        state={wizard}
+        onConfirm={() => setWizard({ phase: 'confirm', snap: (wizard as any).snap })}
+        onClose={closeWizard}
+        onRun={runValuation}
+        overrideCurrency={overrideCurrency}
+        setOverrideCurrency={setOverrideCurrency}
+      />
+
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
         <div>
           <h1 style={{ fontSize: '22px', fontWeight: 700, color: D.dark, margin: 0 }}>Inventory Snapshots</h1>
           <p style={{ color: D.secondary, fontSize: '14px', margin: '4px 0 0' }}>
-            Open a snapshot to view lines, run valuations, and link to a Cost Build.
+            Capture on-hand quantities, then click <strong>Value Inventory</strong> to compute stock value.
           </p>
         </div>
         <button
-          onClick={() => { setShowCreate(!showCreate); setError(null) }}
+          onClick={() => { setShowCreate(!showCreate); setFormError(null) }}
           style={{ background: showCreate ? D.card : D.red, color: showCreate ? D.dark : '#fff', border: `1px solid ${showCreate ? D.border : D.red}`, padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '14px', fontWeight: 600 }}
         >
           {showCreate ? 'Cancel' : '+ New Snapshot'}
         </button>
       </div>
 
-      {error && (
+      {formError && (
         <div style={{ background: '#FEF2F2', border: `1px solid ${D.error}`, borderRadius: '6px', padding: '12px 16px', marginBottom: '20px', fontSize: '13px', color: D.error }}>
-          {error}
+          {formError}
         </div>
       )}
 
@@ -125,15 +363,15 @@ export default function InventoryPage() {
         </form>
       )}
 
-      {/* Snapshot list */}
+      {/* Snapshot table */}
       {loading ? (
-        <p style={{ color: D.secondary, fontSize: '14px' }}>Loading…</p>
+        <div style={{ padding: '48px', textAlign: 'center', color: D.secondary, fontSize: '14px' }}>Loading…</div>
       ) : (
         <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '8px', overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ background: D.bg, borderBottom: `1px solid ${D.border}` }}>
-                {['Name', 'Date', 'Type', 'Status', 'Lines', 'Total Value', 'Missing Costs', ''].map(h => (
+                {['Snapshot', 'Site', 'Date', 'Status', 'Cost Build', 'Last Valuation', 'Actions'].map(h => (
                   <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: D.secondary, whiteSpace: 'nowrap' }}>{h}</th>
                 ))}
               </tr>
@@ -141,17 +379,14 @@ export default function InventoryPage() {
             <tbody>
               {snapshots.length === 0 ? (
                 <tr>
-                  <td colSpan={8} style={{ padding: '40px 32px', textAlign: 'center' }}>
+                  <td colSpan={7} style={{ padding: '48px 32px', textAlign: 'center' }}>
                     <div style={{ fontSize: '32px', marginBottom: '12px' }}>📦</div>
                     <div style={{ fontSize: '15px', fontWeight: 700, color: D.dark, marginBottom: '8px' }}>No inventory snapshots yet</div>
                     <div style={{ fontSize: '13px', color: D.secondary, maxWidth: '380px', margin: '0 auto 16px', lineHeight: 1.5 }}>
-                      An inventory snapshot captures on-hand quantities at a point in time. Once you have an approved Cost Build, create a snapshot and run valuation to compute stock values.
+                      Create a snapshot to capture on-hand quantities, then click <strong>Value Inventory</strong> to compute stock value using an approved Cost Build.
                     </div>
                     <div style={{ display: 'flex', gap: '10px', justifyContent: 'center', flexWrap: 'wrap' }}>
-                      <button
-                        onClick={() => setShowCreate(true)}
-                        style={{ background: D.red, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}
-                      >
+                      <button onClick={() => setShowCreate(true)} style={{ background: D.red, color: '#fff', border: 'none', padding: '8px 20px', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
                         + New Snapshot
                       </button>
                       <a href="/cost-builds" style={{ border: `1px solid ${D.border}`, padding: '8px 20px', borderRadius: '6px', fontSize: '13px', color: D.secondary, textDecoration: 'none', display: 'inline-block' }}>
@@ -160,33 +395,107 @@ export default function InventoryPage() {
                     </div>
                   </td>
                 </tr>
-              ) : snapshots.map((snap, i) => (
-                <tr key={snap.id} style={{ borderBottom: `1px solid ${D.border}`, background: i % 2 === 0 ? D.card : D.bg }}>
-                  <td style={{ padding: '10px 14px', fontWeight: 600, color: D.dark }}>{snap.snapshot_name}</td>
-                  <td style={{ padding: '10px 14px', color: D.secondary }}>{snap.snapshot_date}</td>
-                  <td style={{ padding: '10px 14px', color: D.secondary }}>{snap.snapshot_type}</td>
-                  <td style={{ padding: '10px 14px' }}>
-                    <span style={{ color: STATUS_COLOR[snap.status] ?? D.secondary, fontWeight: 500 }}>{snap.status}</span>
-                  </td>
-                  <td style={{ padding: '10px 14px' }}>{snap.line_count ?? '—'}</td>
-                  <td style={{ padding: '10px 14px', fontFamily: 'monospace' }}>
-                    {fmtNum(snap.total_value, snap.base_currency)}
-                  </td>
-                  <td style={{ padding: '10px 14px', color: (snap.missing_cost_count ?? 0) > 0 ? D.error : D.secondary }}>
-                    {snap.missing_cost_count ?? '—'}
-                  </td>
-                  <td style={{ padding: '10px 14px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <a href={`/inventory/${snap.id}`} style={{ fontSize: '13px', fontWeight: 600, color: D.red, textDecoration: 'none' }}>
-                      Open →
-                    </a>
-                    {snap.status === 'approved' && (
-                      <a href={`/inventory/${snap.id}`} style={{ fontSize: '11px', fontWeight: 600, color: '#fff', background: '#0d9488', textDecoration: 'none', padding: '2px 8px', borderRadius: '4px', whiteSpace: 'nowrap' }}>
-                        Value →
+              ) : snapshots.map((snap, i) => {
+                const build    = snap.best_build
+                const lastVal  = snap.latest_valuation
+                const canValue = !!build && ['complete', 'approved', 'locked'].includes(build.status)
+
+                return (
+                  <tr key={snap.id} style={{ borderBottom: `1px solid ${D.border}`, background: i % 2 === 0 ? D.card : D.bg }}>
+
+                    {/* Snapshot name + lines count */}
+                    <td style={{ padding: '10px 14px' }}>
+                      <a href={`/inventory/${snap.id}`} style={{ fontWeight: 600, color: D.dark, textDecoration: 'none' }}>
+                        {snap.snapshot_name}
                       </a>
-                    )}
-                  </td>
-                </tr>
-              ))}
+                      {snap.line_count != null && (
+                        <div style={{ fontSize: '11px', color: D.secondary }}>{snap.line_count.toLocaleString()} lines</div>
+                      )}
+                    </td>
+
+                    {/* Site */}
+                    <td style={{ padding: '10px 14px', color: D.secondary }}>
+                      {snap.site ? (
+                        <span title={snap.site.country ?? undefined}>{snap.site.name}</span>
+                      ) : '—'}
+                    </td>
+
+                    {/* Date */}
+                    <td style={{ padding: '10px 14px', color: D.secondary, whiteSpace: 'nowrap' }}>{snap.snapshot_date}</td>
+
+                    {/* Snapshot status */}
+                    <td style={{ padding: '10px 14px' }}>
+                      <span style={{ color: STATUS_COLOR[snap.status] ?? D.secondary, fontWeight: 500 }}>{snap.status}</span>
+                    </td>
+
+                    {/* Cost Build */}
+                    <td style={{ padding: '10px 14px' }}>
+                      {build ? (
+                        <div>
+                          <div style={{ fontWeight: 500, color: D.dark, fontSize: '12px' }}>{build.name}</div>
+                          <div style={{ fontSize: '11px' }}>
+                            <span style={{ color: STATUS_COLOR[build.status] ?? D.secondary, fontWeight: 600 }}>{build.status}</span>
+                            {build.cost_sets && <span style={{ color: D.secondary }}> · {build.cost_sets.base_currency}</span>}
+                          </div>
+                        </div>
+                      ) : (
+                        <a href="/cost-builds" style={{ fontSize: '12px', color: D.warning, textDecoration: 'none' }}>
+                          No approved build →
+                        </a>
+                      )}
+                    </td>
+
+                    {/* Last Valuation */}
+                    <td style={{ padding: '10px 14px' }}>
+                      {lastVal ? (
+                        <div>
+                          <span style={{ color: VAL_STATUS_COLOR[lastVal.status] ?? D.secondary, fontWeight: 600, fontSize: '12px' }}>{lastVal.status}</span>
+                          {lastVal.total_value != null && (
+                            <div style={{ fontSize: '12px', fontFamily: 'monospace', color: D.dark }}>{fmtVal(lastVal.total_value, lastVal.valuation_currency)}</div>
+                          )}
+                          <div style={{ fontSize: '11px', color: D.secondary }}>{fmtDate(lastVal.created_at)}</div>
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: D.secondary }}>—</span>
+                      )}
+                    </td>
+
+                    {/* Actions */}
+                    <td style={{ padding: '10px 14px', whiteSpace: 'nowrap' }}>
+                      <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                        {canValue ? (
+                          <button
+                            onClick={() => openWizard(snap)}
+                            style={{
+                              background: D.teal, color: '#fff', border: 'none',
+                              padding: '5px 14px', borderRadius: '5px',
+                              fontSize: '12px', fontWeight: 700, cursor: 'pointer', whiteSpace: 'nowrap',
+                            }}
+                          >
+                            Value Inventory
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: D.secondary }}>Need Cost Build</span>
+                        )}
+                        <a
+                          href={`/inventory/${snap.id}`}
+                          style={{ fontSize: '12px', fontWeight: 600, color: D.red, textDecoration: 'none' }}
+                        >
+                          Open
+                        </a>
+                        {lastVal && (
+                          <a
+                            href={`/valuation-reports/${lastVal.id}`}
+                            style={{ fontSize: '11px', fontWeight: 600, color: D.blue, textDecoration: 'none' }}
+                          >
+                            Report
+                          </a>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>

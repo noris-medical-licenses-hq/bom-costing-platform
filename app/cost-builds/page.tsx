@@ -404,18 +404,29 @@ function BuildDetail({
 
       {/* Approve button — complete → approved */}
       {build.status === 'complete' && (
-        <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '12px', alignItems: 'center' }}>
-          <button
-            onClick={onApprove}
-            disabled={actioning}
-            style={{ background: D.teal, color: '#fff', border: 'none', padding: '10px 28px', borderRadius: '6px', cursor: actioning ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 600, opacity: actioning ? 0.7 : 1 }}
-          >
-            {actioning ? '…' : '✓ Approve Build'}
-          </button>
-          <div style={{ fontSize: '12px', color: D.secondary }}>
-            Approves this build for use in Inventory Valuation. After approval, the build can be locked.
+        <>
+          <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '12px', alignItems: 'center' }}>
+            <button
+              onClick={onApprove}
+              disabled={actioning}
+              style={{ background: D.teal, color: '#fff', border: 'none', padding: '10px 28px', borderRadius: '6px', cursor: actioning ? 'not-allowed' : 'pointer', fontSize: '14px', fontWeight: 600, opacity: actioning ? 0.7 : 1 }}
+            >
+              {actioning ? '…' : '✓ Approve Build'}
+            </button>
+            <div style={{ fontSize: '12px', color: D.secondary }}>
+              Approves this build for use in Inventory Valuation. After approval, the build can be locked.
+            </div>
           </div>
-        </div>
+          {/* Next step: import inventory while approving */}
+          <div style={{ padding: '12px 20px', background: '#EFF6FF', borderBottom: `1px solid #BFDBFE`, fontSize: '13px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '16px' }}>
+            <span style={{ color: '#1e40af' }}>
+              Costs resolved. <strong>Next:</strong> import your on-hand inventory quantities, then run Inventory Valuation.
+            </span>
+            <a href="/imports" style={{ background: '#1565c0', color: '#fff', textDecoration: 'none', padding: '6px 14px', borderRadius: '5px', fontSize: '12px', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}>
+              Import Inventory →
+            </a>
+          </div>
+        </>
       )}
 
       {/* Lock button — approved → locked */}

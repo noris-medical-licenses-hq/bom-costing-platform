@@ -103,18 +103,20 @@ function PipelineStep({ step, index, isLast }: { step: PipelineStepState; index:
 }
 
 export default function Dashboard() {
-  const [workflow, setWorkflow] = useState<WorkflowStatus | null>(null)
-  const [kpis, setKpis] = useState<{ skus: number; boms: number; sites: number; imports: string | null } | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [workflow, setWorkflow]   = useState<WorkflowStatus | null>(null)
+  const [kpis, setKpis]           = useState<{ skus: number; boms: number; sites: number; imports: string | null } | null>(null)
+  const [latestVal, setLatestVal] = useState<{ id: string; name: string | null; totalValue: number | null; currency: string; status: string; snapshotName: string | null; createdAt: string } | null>(null)
+  const [loading, setLoading]     = useState(true)
 
   useEffect(() => {
     async function load() {
-      const [wfRes, skuRes, bomRes, siteRes, impRes] = await Promise.allSettled([
+      const [wfRes, skuRes, bomRes, siteRes, impRes, valRes] = await Promise.allSettled([
         fetch('/api/workflow-status').then(r => r.json()),
         fetch('/api/skus').then(r => r.json()),
         fetch('/api/boms').then(r => r.json()),
         fetch('/api/sites').then(r => r.json()),
         fetch('/api/imports?limit=1').then(r => r.json()),
+        fetch('/api/valuation-reports?limit=1').then(r => r.json()),
       ])
       if (wfRes.status === 'fulfilled') setWorkflow(wfRes.value)
       setKpis({
@@ -123,6 +125,18 @@ export default function Dashboard() {
         sites:   siteRes.status === 'fulfilled' ? (siteRes.value?.data?.length ?? 0) : 0,
         imports: impRes.status  === 'fulfilled' ? (impRes.value?.data?.[0]?.created_at ?? null) : null,
       })
+      if (valRes.status === 'fulfilled') {
+        const v = valRes.value?.data?.[0] ?? null
+        if (v) setLatestVal({
+          id:           v.id,
+          name:         v.name ?? null,
+          totalValue:   v.total_value ?? null,
+          currency:     v.valuation_currency ?? v.base_currency ?? '?',
+          status:       v.status,
+          snapshotName: v.inventory_snapshots?.snapshot_name ?? null,
+          createdAt:    v.created_at,
+        })
+      }
       setLoading(false)
     }
     load()
@@ -208,6 +222,33 @@ export default function Dashboard() {
             }}
           >
             {rec.actionLabel} →
+          </a>
+        </div>
+      )}
+
+      {/* ── Latest Inventory Value card ──────────────────────────────────────── */}
+      {latestVal && !loading && (
+        <div style={{ background: D.card, border: `1px solid ${D.border}`, borderRadius: '10px', padding: '18px 24px', marginBottom: '20px', display: 'flex', alignItems: 'center', gap: '24px' }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: '11px', fontWeight: 700, color: D.secondary, textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px' }}>
+              Latest Inventory Value
+            </div>
+            <div style={{ fontSize: '26px', fontWeight: 700, color: D.dark, fontFamily: 'monospace', marginBottom: '4px' }}>
+              {latestVal.totalValue != null
+                ? `${latestVal.currency} ${latestVal.totalValue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                : <span style={{ color: D.secondary }}>—</span>}
+            </div>
+            <div style={{ display: 'flex', gap: '16px', fontSize: '12px', color: D.secondary, flexWrap: 'wrap' }}>
+              {latestVal.snapshotName && <span>Snapshot: <strong style={{ color: D.dark }}>{latestVal.snapshotName}</strong></span>}
+              <span>Status: <strong style={{ color: latestVal.status === 'approved' || latestVal.status === 'locked' ? D.success : D.secondary }}>{latestVal.status}</strong></span>
+              <span>Date: <strong style={{ color: D.dark }}>{new Date(latestVal.createdAt).toLocaleDateString()}</strong></span>
+            </div>
+          </div>
+          <a
+            href={`/valuation-reports/${latestVal.id}`}
+            style={{ background: D.teal, color: '#fff', textDecoration: 'none', padding: '10px 20px', borderRadius: '6px', fontSize: '13px', fontWeight: 700, whiteSpace: 'nowrap', flexShrink: 0 }}
+          >
+            Open Report →
           </a>
         </div>
       )}
