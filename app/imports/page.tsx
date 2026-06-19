@@ -1063,6 +1063,21 @@ export default function ImportsPage() {
             </Card>
           )}
 
+          {(validation.errorRows > 0 || validation.warningRows > 0) && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '10px 14px', background: '#F0F9FF', border: '1px solid #BAE6FD', borderRadius: '6px', marginBottom: '12px', fontSize: '13px' }}>
+              <span style={{ color: '#0369a1', fontWeight: 500 }}>
+                {validation.errorRows} error{validation.errorRows !== 1 ? 's' : ''}, {validation.warningRows} warning{validation.warningRows !== 1 ? 's' : ''}
+              </span>
+              <a
+                href={`/api/imports/export-issues?jobId=${validation.jobId}`}
+                download
+                style={{ color: '#0369a1', background: '#e0f2fe', border: '1px solid #bae6fd', padding: '3px 10px', borderRadius: '4px', textDecoration: 'none', fontWeight: 600, fontSize: '12px' }}
+              >
+                Export Issues.xlsx
+              </a>
+            </div>
+          )}
+
           {ALL_OR_NOTHING.has(importType.type) && validation.errorRows > 0 && (
             <div style={{ padding: '12px 16px', background: '#FFFBEB', border: '1px solid #FDE68A', borderRadius: '6px', fontSize: '14px', color: '#92400E', marginBottom: '20px' }}>
               ⚠ {importType.label} uses all-or-nothing commit. Fix all {fmtNum(validation.errorRows)} error{validation.errorRows !== 1 ? 's' : ''} before committing.

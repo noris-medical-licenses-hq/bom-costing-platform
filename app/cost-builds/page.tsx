@@ -545,6 +545,20 @@ function BuildDetail({
         </div>
       )}
 
+      {/* Export Build Issues — available on complete/complete_with_warnings */}
+      {(build.status === 'complete' || build.status === 'complete_with_warnings') && (
+        <div style={{ padding: '10px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <a
+            href={`/api/cost-builds/export-issues?buildId=${build.id}`}
+            download
+            style={{ fontSize: '12px', color: '#0369a1', background: '#e0f2fe', border: '1px solid #bae6fd', padding: '4px 12px', borderRadius: '4px', textDecoration: 'none', fontWeight: 500 }}
+          >
+            Export Build Issues.xlsx
+          </a>
+          <span style={{ fontSize: '12px', color: D.secondary }}>Download all zero-cost SKUs with fix guidance</span>
+        </div>
+      )}
+
       {/* Approve button — complete or complete_with_warnings → approved */}
       {(build.status === 'complete' || build.status === 'complete_with_warnings') && (
         <>

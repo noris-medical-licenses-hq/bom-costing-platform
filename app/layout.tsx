@@ -17,6 +17,7 @@ const NAV_LINKS = [
   { href: '/cost-comparison',  label: 'Compare'       },
   { href: '/mfg-structures',   label: 'Mfg Structures' },
   { href: '/cost-quality',     label: 'Cost Quality'  },
+  { href: '/data-quality',     label: 'Data Quality'  },
   { href: '/inventory',        label: 'Inventory'     },
   { href: '/sites',         label: 'Sites'        },
   { href: '/warehouses',    label: 'Warehouses'   },
