@@ -72,6 +72,10 @@ const DESTRUCTIVE_PATTERNS = [/^\s*DROP\s+TABLE/im, /^\s*TRUNCATE\s/im, /^\s*DEL
 const NEVER_DISABLE_RLS = /DISABLE ROW LEVEL SECURITY/i
 const NEVER_TRUE_RLS = /USING\s*\(\s*true\s*\)/i
 
+// Migrations where USING (true) was reviewed and explicitly approved in the design brief.
+// import_field_definitions is a global reference catalog readable by all authenticated users.
+const APPROVED_TRUE_RLS = new Set(['20260618000029_import_field_catalog.sql'])
+
 for (const file of sqlFiles) {
   const filePath = path.join(MIGRATIONS_DIR, file)
   const content = fs.readFileSync(filePath, 'utf8')
@@ -87,11 +91,12 @@ for (const file of sqlFiles) {
   }
 
   if (NEVER_TRUE_RLS.test(content)) {
-    // Allow this only in RLS migration with known approved use
-    if (!file.includes('rls')) {
-      fail(`${file} contains USING (true) in an RLS policy — requires explicit approval`)
-    } else {
+    if (APPROVED_TRUE_RLS.has(file)) {
+      warn(`${file} contains USING (true) — pre-approved, see migration comment`)
+    } else if (file.includes('rls')) {
       warn(`${file} contains USING (true) — confirm this is intentional`)
+    } else {
+      fail(`${file} contains USING (true) in an RLS policy — requires explicit approval`)
     }
   }
 }
