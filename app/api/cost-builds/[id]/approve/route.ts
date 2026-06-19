@@ -21,9 +21,9 @@ export async function POST(
 
     if (fetchErr || !build) return NextResponse.json({ error: 'Build not found' }, { status: 404 })
 
-    if (build.status !== 'complete') {
+    if (!['complete', 'complete_with_warnings'].includes(build.status)) {
       return NextResponse.json(
-        { error: `Only complete builds can be approved (current status: ${build.status})` },
+        { error: `Only complete or complete_with_warnings builds can be approved (current status: ${build.status})` },
         { status: 409 }
       )
     }

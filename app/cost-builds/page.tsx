@@ -35,6 +35,7 @@ const STRATEGY_LABEL: Record<string, string> = {
 const STATUS_COLOR: Record<string, string> = {
   draft: D.secondary, running: D.warning, complete: D.blue,
   complete_with_warnings: D.warning, failed: D.error, archived: D.secondary,
+  approved: D.success, locked: D.success,
 }
 const ITEM_TYPE_COLOR: Record<string, string> = {
   PURCHASED: D.blue, MANUFACTURED: D.success, MAKE_OR_BUY: D.warning, SERVICE: D.purple, MANUAL: D.secondary,
@@ -544,8 +545,8 @@ function BuildDetail({
         </div>
       )}
 
-      {/* Approve button — complete → approved */}
-      {build.status === 'complete' && (
+      {/* Approve button — complete or complete_with_warnings → approved */}
+      {(build.status === 'complete' || build.status === 'complete_with_warnings') && (
         <>
           <div style={{ padding: '16px 20px', borderBottom: `1px solid ${D.border}`, display: 'flex', gap: '12px', alignItems: 'center' }}>
             <button

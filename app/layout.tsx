@@ -24,8 +24,9 @@ const NAV_LINKS = [
   { href: '/fx-rates',      label: 'FX Rates'     },
   { href: '/skus',          label: 'SKUs'         },
   { href: '/traces',        label: 'Traces'       },
-  { href: '/validation',    label: 'Validation'   },
-  { href: '/audit',         label: 'Audit'        },
+  { href: '/validation',      label: 'Validation'       },
+  { href: '/audit',           label: 'Audit'            },
+  { href: '/strategy-status', label: 'Strategy Status'  },
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

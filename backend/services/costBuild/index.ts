@@ -46,7 +46,7 @@ export async function runCostBuild(
   if (buildErr || !build) throw new Error(`Cost build not found: ${buildId}`)
   if (build.status === 'running') throw new Error('Build is already running')
   if (['approved', 'locked'].includes(build.status)) throw new Error(`Build is ${build.status} and cannot be re-run`)
-  if (build.status === 'complete') throw new Error('Build is already complete — archive it first or approve it')
+  if (['complete', 'complete_with_warnings'].includes(build.status)) throw new Error(`Build is ${build.status} — approve it or archive it before re-running`)
 
   await db.from('site_cost_builds')
     .update({ status: 'running' })

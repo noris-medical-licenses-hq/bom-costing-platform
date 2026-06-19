@@ -53,7 +53,6 @@ const IMPORT_TYPES: ImportTypeSummary[] = [
   { type: 'inventory_snapshot',   label: 'Inventory Snapshot',  description: 'On-hand quantities with warehouse, bin, lot, traceability and dates.' },
   { type: 'price_list',           label: 'Price List',          description: 'Standard price list (supports auto-detection of name, country, currency from header rows). Creates a Cost Set.' },
   { type: 'purchase_history',     label: 'Purchase History',    description: 'ERP purchase records for LAST_PURCHASE and AVERAGE_PURCHASE costing strategies. Include site_code or select a default site.' },
-  { type: 'supplier_prices',      label: 'Supplier Prices',     description: 'Quoted / contracted prices per SKU per supplier.' },
 ]
 
 const ALL_OR_NOTHING = new Set(['bom_lines', 'costs'])
