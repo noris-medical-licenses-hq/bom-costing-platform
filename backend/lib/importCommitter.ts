@@ -121,11 +121,12 @@ async function commitSkuMaster(
       unit_of_measure: d['uom'] ? String(d['uom']).trim() : 'EA',
       family_id:       famName ? (familyMap.get(famName) ?? null) : null,
       subfamily_id:    subName ? (subfamilyMap.get(subName) ?? null) : null,
-      status:          'active',
-      is_regulated:    false,
-      created_by:      userId,
-      updated_by:      userId,
-      _rowNumber:      row.rowNumber,
+      status:             'active',
+      is_regulated:       false,
+      import_job_row_id:  row.rowId ?? null,
+      created_by:         userId,
+      updated_by:         userId,
+      _rowNumber:         row.rowNumber,
     }
   })
 
@@ -241,15 +242,16 @@ async function commitBomLines(
         continue
       }
       lineRecords.push({
-        organization_id: orgId,
-        bom_version_id:  version.id,
-        line_type:       'sku',
-        sku_id:          childId,
-        quantity:        Number(r.mappedData['quantity']) || 1,
-        unit_of_measure: 'EA',
-        created_by:      userId,
-        updated_by:      userId,
-        _rowNumber:      r.rowNumber,
+        organization_id:    orgId,
+        bom_version_id:     version.id,
+        line_type:          'sku',
+        sku_id:             childId,
+        quantity:           Number(r.mappedData['quantity']) || 1,
+        unit_of_measure:    'EA',
+        import_job_row_id:  r.rowId ?? null,
+        created_by:         userId,
+        updated_by:         userId,
+        _rowNumber:         r.rowNumber,
       })
     }
 
@@ -307,21 +309,22 @@ async function commitCosts(
       : new Date().toISOString().slice(0, 10)
 
     toInsert.push({
-      organization_id: orgId,
-      cost_set_id:     csId,
-      item_type:       'material_price',
-      scope_type:      'sku',
-      scope_id:        skuId,
-      scope_code:      skuNum,
-      value:           Number(r.mappedData['cost']) || 0,
-      value_unit:      'currency_amount',
-      currency:        ccy,
-      applies_to:      'per_unit',
-      effective_from:  effDate,
-      is_active:       true,
-      created_by:      userId,
-      updated_by:      userId,
-      _rowNumber:      r.rowNumber,
+      organization_id:    orgId,
+      cost_set_id:        csId,
+      item_type:          'material_price',
+      scope_type:         'sku',
+      scope_id:           skuId,
+      scope_code:         skuNum,
+      value:              Number(r.mappedData['cost']) || 0,
+      value_unit:         'currency_amount',
+      currency:           ccy,
+      applies_to:         'per_unit',
+      effective_from:     effDate,
+      is_active:          true,
+      import_job_row_id:  r.rowId ?? null,
+      created_by:         userId,
+      updated_by:         userId,
+      _rowNumber:         r.rowNumber,
     })
   }
 
@@ -411,15 +414,16 @@ async function commitInventory(
     }
 
     toInsert.push({
-      organization_id: orgId,
-      snapshot_id:     snapshot.id,
-      sku_id:          skuId,
-      warehouse_id:    warehouseId,
-      quantity:        Number(r.mappedData['quantity']) || 0,
-      currency:        costSet.base_currency ?? 'USD',
-      created_by:      userId,
-      updated_by:      userId,
-      _rowNumber:      r.rowNumber,
+      organization_id:    orgId,
+      snapshot_id:        snapshot.id,
+      sku_id:             skuId,
+      warehouse_id:       warehouseId,
+      quantity:           Number(r.mappedData['quantity']) || 0,
+      currency:           costSet.base_currency ?? 'USD',
+      import_job_row_id:  r.rowId ?? null,
+      created_by:         userId,
+      updated_by:         userId,
+      _rowNumber:         r.rowNumber,
     })
   }
 

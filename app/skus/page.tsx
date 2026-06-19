@@ -9,6 +9,7 @@ type Sku = {
   make_buy: string
   status: string
   family_id: string | null
+  import_job_row_id: string | null
 }
 
 type CreateSkuForm = {
@@ -152,14 +153,14 @@ export default function SkuPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
             <thead>
               <tr style={{ background: '#f8f8f8', borderBottom: '1px solid #e0e0e0' }}>
-                {['Part Number', 'Name', 'Type', 'Make/Buy', 'Status', 'Actions'].map(h => (
+                {['Part Number', 'Name', 'Type', 'Make/Buy', 'Status', 'Source', 'Actions'].map(h => (
                   <th key={h} style={{ padding: '10px 14px', textAlign: 'left', fontWeight: 600, color: '#444' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
-                <tr><td colSpan={6} style={{ padding: '20px', textAlign: 'center', color: '#888' }}>No SKUs found</td></tr>
+                <tr><td colSpan={7} style={{ padding: '20px', textAlign: 'center', color: '#888' }}>No SKUs found</td></tr>
               ) : filtered.map(sku => (
                 <tr key={sku.id} style={{ borderBottom: '1px solid #f0f0f0' }}>
                   <td style={{ padding: '10px 14px', fontFamily: 'monospace', fontWeight: 600 }}>{sku.part_number}</td>
@@ -170,6 +171,21 @@ export default function SkuPage() {
                     <span style={{ background: sku.status === 'active' ? '#e6f4ea' : '#f5f5f5', color: sku.status === 'active' ? '#2e7d32' : '#666', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>
                       {sku.status}
                     </span>
+                  </td>
+                  <td style={{ padding: '10px 14px' }}>
+                    {sku.import_job_row_id ? (
+                      <a
+                        href={`/api/import-trace/${sku.import_job_row_id}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`Import row: ${sku.import_job_row_id}`}
+                        style={{ fontSize: '11px', color: '#0369a1', textDecoration: 'none', background: '#e0f2fe', padding: '2px 7px', borderRadius: '4px', fontWeight: 500 }}
+                      >
+                        Imported
+                      </a>
+                    ) : (
+                      <span style={{ fontSize: '11px', color: '#999' }}>Manual</span>
+                    )}
                   </td>
                   <td style={{ padding: '10px 14px' }}>
                     {sku.status !== 'archived' && (

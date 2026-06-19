@@ -27,7 +27,7 @@ export async function GET(req: NextRequest, { params }: RouteParams) {
     const { data, error } = await db
       .from('inventory_lines')
       .select(`
-        id, sku_id, warehouse_id, quantity, unit_cost, notes,
+        id, sku_id, warehouse_id, quantity, unit_cost, notes, import_job_row_id,
         skus(part_number, name, sku_type, item_cost_type),
         warehouses(code, name)
       `)
