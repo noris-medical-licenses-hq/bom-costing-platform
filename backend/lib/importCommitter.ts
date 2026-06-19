@@ -41,6 +41,9 @@ export async function commitImport(
     case 'inventory_snapshot':
       await commitInventory(commitableRows, orgId, userId, result, client)
       break
+    case 'price_list':
+      await commitPriceList(jobId, commitableRows, orgId, userId, result, client)
+      break
     default:
       result.errors.push({ row: 0, error: `Import type "${importType}" commit not yet implemented` })
   }
@@ -393,6 +396,159 @@ async function commitInventory(
     const batch = toInsert.slice(i, i + DB_BATCH)
     const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
     const { error } = await db.from('inventory_lines').insert(insertBatch)
+    if (error) {
+      for (const r of batch) result.errors.push({ row: r._rowNumber as number, error: error.message })
+    } else {
+      result.committed += batch.length
+    }
+  }
+}
+
+// ─── Price List ───────────────────────────────────────────────────────────────
+// Creates a Cost Set from imported price list data.
+// Metadata (price_list_name, target_country, currency) is read from import_jobs.metadata.
+
+const COUNTRY_NAME_TO_CODE: Record<string, string> = {
+  germany: 'DE', deutschland: 'DE',
+  france: 'FR', frankreich: 'FR',
+  italy: 'IT', italia: 'IT',
+  spain: 'ES',
+  'united states': 'US', usa: 'US', america: 'US',
+  'united kingdom': 'GB', uk: 'GB', britain: 'GB', england: 'GB',
+  austria: 'AT',
+  switzerland: 'CH', schweiz: 'CH',
+  netherlands: 'NL', holland: 'NL',
+  belgium: 'BE',
+  poland: 'PL',
+  'czech republic': 'CZ', czechia: 'CZ',
+  hungary: 'HU',
+  sweden: 'SE',
+  denmark: 'DK',
+  norway: 'NO',
+  finland: 'FI',
+  portugal: 'PT',
+  greece: 'GR',
+  israel: 'IL',
+  china: 'CN',
+  japan: 'JP',
+  'south korea': 'KR', korea: 'KR',
+  india: 'IN',
+}
+
+async function commitPriceList(
+  jobId: string,
+  rows: RowValidationResult[],
+  orgId: string,
+  userId: string,
+  result: CommitResult,
+  client: SupabaseServiceClient
+): Promise<void> {
+  const db = client as any
+
+  // Load job metadata for price list name, country, currency
+  const { data: job } = await db.from('import_jobs').select('metadata, file_name').eq('id', jobId).single()
+  const meta = (job?.metadata as Record<string, unknown>)?.price_list as Record<string, string> | undefined
+
+  const priceListName = meta?.priceListName ?? job?.file_name ?? `Price List ${new Date().toISOString().slice(0, 10)}`
+  const rawCountry    = (meta?.targetCountry ?? '').trim()
+  const currency      = ((meta?.currency ?? 'USD').trim().toUpperCase() || 'USD')
+  const today         = new Date().toISOString().slice(0, 10)
+
+  // Resolve country code
+  const countryCode = rawCountry.length === 2
+    ? rawCountry.toUpperCase()
+    : COUNTRY_NAME_TO_CODE[rawCountry.toLowerCase()] ?? null
+
+  // Find site for this country (optional — used to link cost_set.site_id)
+  let siteId: string | null = null
+  if (countryCode) {
+    const { data: siteRows } = await db.from('sites')
+      .select('id')
+      .eq('organization_id', orgId)
+      .eq('country', countryCode)
+      .eq('status', 'active')
+      .limit(1)
+    siteId = siteRows?.[0]?.id ?? null
+  }
+
+  // Create Cost Set for this price list
+  const costSetCode = `PL-${jobId.slice(0, 8).toUpperCase()}`
+  const { data: costSet, error: csErr } = await db.from('cost_sets').insert({
+    organization_id: orgId,
+    code:            costSetCode,
+    name:            priceListName,
+    description:     rawCountry ? `Imported price list — ${rawCountry}` : 'Imported price list',
+    cost_set_type:   'price_list',
+    base_currency:   currency,
+    effective_from:  today,
+    is_active:       true,
+    is_frozen:       false,
+    site_id:         siteId,
+    notes:           `Auto-created from import job ${jobId}`,
+    status:          'draft',
+    created_by:      userId,
+    updated_by:      userId,
+  }).select('id').single()
+
+  if (csErr || !costSet) {
+    result.errors.push({ row: 0, error: `Failed to create Cost Set: ${csErr?.message ?? 'unknown'}` })
+    return
+  }
+  const costSetId: string = costSet.id
+
+  // Load SKU map
+  const partNums = [...new Set(rows.map(r => String(r.mappedData['part_number'] ?? '').trim()).filter(Boolean))]
+  const { data: skuRows } = await db.from('skus').select('id, part_number').eq('organization_id', orgId).in('part_number', partNums)
+  const skuMap = new Map<string, string>()
+  for (const s of skuRows ?? []) skuMap.set(s.part_number, s.id)
+
+  const toInsert: Array<Record<string, unknown> & { _rowNumber: number }> = []
+
+  for (const r of rows) {
+    const partNum  = String(r.mappedData['part_number'] ?? '').trim()
+    const skuId    = skuMap.get(partNum)
+    if (!skuId) {
+      result.errors.push({ row: r.rowNumber, error: `Part number "${partNum}" not found in SKU master` })
+      result.skipped++
+      continue
+    }
+
+    const rawPrice = r.mappedData['unit_price']
+    const price    = Number(rawPrice)
+    if (isNaN(price) || price < 0) {
+      result.errors.push({ row: r.rowNumber, error: `Invalid price "${rawPrice}"` })
+      result.skipped++
+      continue
+    }
+
+    const lineCcy  = String(r.mappedData['currency'] ?? '').trim().toUpperCase()
+    const ccy      = lineCcy.length === 3 ? lineCcy : currency
+
+    toInsert.push({
+      organization_id: orgId,
+      cost_set_id:     costSetId,
+      item_type:       'material_price',
+      scope_type:      'sku',
+      scope_id:        skuId,
+      scope_code:      partNum,
+      sku_id:          skuId,
+      value:           price,
+      value_unit:      'currency_amount',
+      currency:        ccy,
+      applies_to:      'per_unit',
+      effective_from:  today,
+      is_active:       true,
+      source:          `price_list_import:${jobId}`,
+      created_by:      userId,
+      updated_by:      userId,
+      _rowNumber:      r.rowNumber,
+    })
+  }
+
+  for (let i = 0; i < toInsert.length; i += DB_BATCH) {
+    const batch = toInsert.slice(i, i + DB_BATCH)
+    const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
+    const { error } = await db.from('cost_items').insert(insertBatch)
     if (error) {
       for (const r of batch) result.errors.push({ row: r._rowNumber as number, error: error.message })
     } else {

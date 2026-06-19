@@ -8,10 +8,16 @@ const Schema = z.object({
     'sku_master', 'bom_lines', 'costs', 'inventory_snapshot',
     'supplier_prices', 'suppliers', 'sites', 'warehouses',
     'cost_rules', 'rule_exceptions', 'virtual_components',
+    'price_list',
   ]),
-  fileName:  z.string(),
-  mapping:   z.record(z.string()),
-  totalRows: z.number().int().positive(),
+  fileName:       z.string(),
+  mapping:        z.record(z.string()),
+  totalRows:      z.number().int().positive(),
+  priceListMeta:  z.object({
+    priceListName:  z.string().optional(),
+    targetCountry:  z.string().optional(),
+    currency:       z.string().optional(),
+  }).optional(),
 })
 
 // Creates a bare import job record without any rows.
@@ -32,7 +38,7 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })
     }
 
-    const { importType, fileName, mapping, totalRows } = parsed.data
+    const { importType, fileName, mapping, totalRows, priceListMeta } = parsed.data
 
     const svc = createServiceSupabaseClient()
     const svcDb = svc as any
@@ -49,6 +55,7 @@ export async function POST(request: NextRequest) {
       error_rows:      0,
       mapping:         mapping,
       created_by:      user.id,
+      metadata:        priceListMeta ? { price_list: priceListMeta } : null,
     }).select('id').single()
 
     if (error || !job) {

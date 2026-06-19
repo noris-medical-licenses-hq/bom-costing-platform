@@ -11,6 +11,7 @@ const NAV_LINKS = [
   { href: '/boms',          label: 'BOMs'         },
   { href: '/cost-builds',   label: 'Cost Builds'  },
   { href: '/inventory',     label: 'Inventory'    },
+  { href: '/sites',         label: 'Sites'        },
   { href: '/validation',    label: 'Validation'   },
   { href: '/imports',       label: 'Imports'      },
   { href: '/audit',         label: 'Audit'        },

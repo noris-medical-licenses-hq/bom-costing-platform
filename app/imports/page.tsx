@@ -34,6 +34,7 @@ const IMPORT_TYPES: ImportTypeSummary[] = [
   { type: 'bom_lines',            label: 'BOM Lines',           description: 'Parent-child component relationships. All-or-nothing commit.', allOrNothing: true },
   { type: 'costs',                label: 'Costs',               description: 'Material costs with currency, cost set, breakdown fields. All-or-nothing.', allOrNothing: true },
   { type: 'inventory_snapshot',   label: 'Inventory Snapshot',  description: 'On-hand quantities with warehouse, bin, lot, traceability and dates.' },
+  { type: 'price_list',           label: 'Price List',          description: 'Standard price list (supports auto-detection of name, country, currency from header rows). Creates a Cost Set.' },
   { type: 'supplier_prices',      label: 'Supplier Prices',     description: 'Quoted / contracted prices per SKU per supplier.' },
   { type: 'manufacturing_orders', label: 'Manufacturing Orders', description: 'Production / work orders with operations and execution data.' },
   { type: 'projects',             label: 'Projects',            description: 'Project and customer master data.' },
@@ -109,14 +110,77 @@ function groupByCategory(fields: FieldDef[]) {
     .map(c => ({ cat: c, label: CAT_LABEL[c] ?? c, fields: map.get(c)! }))
 }
 
+// ─── Standard price list format detection ────────────────────────────────────
+// Rows 1-2 contain metadata, row 3 = headers, row 4+ = data.
+
+export interface DetectedPriceList {
+  priceListName: string; targetCountry: string; currency: string
+}
+
+function detectPriceListFormat(rawRows: unknown[][]): {
+  isStandardFormat: boolean; priceListName?: string; targetCountry?: string; currency?: string
+} {
+  if (rawRows.length < 3) return { isStandardFormat: false }
+  const r0 = rawRows[0] as unknown[]
+  const r1 = rawRows[1] as unknown[]
+  const cell00 = String(r0[0] ?? '').toLowerCase()
+  if (!cell00.includes('price list') && !cell00.includes('מחירון') && !cell00.includes('תיאור מחיר')) {
+    return { isStandardFormat: false }
+  }
+  const priceListName = String(r0[1] ?? '').trim() || String(r0[0] ?? '').trim()
+  let targetCountry = ''
+  let currency = ''
+  for (let i = 0; i < r1.length - 1; i++) {
+    const key = String(r1[i] ?? '').toLowerCase()
+    const val = String(r1[i + 1] ?? '').trim()
+    if (key.includes('country') || key.includes('מדינ') || key.includes('יעד')) { targetCountry = val; i++ }
+    else if (key.includes('currency') || key.includes('מטבע')) { currency = val; i++ }
+  }
+  return { isStandardFormat: true, priceListName, targetCountry, currency }
+}
+
 // ─── Parse file (xlsx/csv → headers + rows) ───────────────────────────────────
 
-async function parseFile(file: File): Promise<{ headers: string[]; rows: Record<string, string>[] }> {
+interface ParseResult {
+  headers: string[]; rows: Record<string, string>[]; detectedPriceList?: DetectedPriceList
+}
+
+async function parseFile(file: File): Promise<ParseResult> {
   const XLSX = await import('xlsx')
   const buf  = await file.arrayBuffer()
   const wb   = XLSX.read(buf, { type: 'array', cellDates: true })
   const ws   = wb.Sheets[wb.SheetNames[0]]
-  const raw  = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
+
+  // Always read raw array-of-arrays first for format detection
+  const rawRows = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, defval: '' })
+
+  const detected = detectPriceListFormat(rawRows)
+
+  if (detected.isStandardFormat && rawRows.length >= 3) {
+    const headerRow = (rawRows[2] as unknown[]).map(c => String(c ?? '').trim()).filter(Boolean)
+    // Parse data starting from row index 3 (rows 4+ in 1-based)
+    const dataRows = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, {
+      header: headerRow,
+      range:  3,
+      defval: '',
+    })
+    const rows = dataRows.map(r =>
+      Object.fromEntries(
+        headerRow.map(h => [h, r[h] instanceof Date ? (r[h] as Date).toISOString().slice(0, 10) : String(r[h] ?? '')])
+      )
+    )
+    return {
+      headers: headerRow,
+      rows,
+      detectedPriceList: {
+        priceListName: detected.priceListName ?? '',
+        targetCountry: detected.targetCountry ?? '',
+        currency:      detected.currency ?? '',
+      },
+    }
+  }
+
+  const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(ws, { defval: '' })
   if (!raw.length) return { headers: [], rows: [] }
   const headers = Object.keys(raw[0])
   const rows = raw.map(r =>
@@ -414,10 +478,11 @@ export default function ImportsPage() {
   const [committing,      setCommitting]      = useState(false)
   const [validation,      setValidation]      = useState<ValidationSummary | null>(null)
   const [commitResult,    setCommitResult]    = useState<CommitSummary | null>(null)
-  const [saveTemplate,    setSaveTemplate]    = useState(false)
-  const [templateName,    setTemplateName]    = useState('')
-  const [error,           setError]           = useState<string | null>(null)
-  const [showCustomModal, setShowCustomModal] = useState(false)
+  const [saveTemplate,      setSaveTemplate]      = useState(false)
+  const [templateName,      setTemplateName]      = useState('')
+  const [error,             setError]             = useState<string | null>(null)
+  const [showCustomModal,   setShowCustomModal]   = useState(false)
+  const [detectedPriceList, setDetectedPriceList] = useState<DetectedPriceList | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const abortRef     = useRef(false)
 
@@ -444,11 +509,18 @@ export default function ImportsPage() {
     setError(null)
     setParsing(true)
     try {
-      const { headers: h, rows: r } = await parseFile(file)
+      const { headers: h, rows: r, detectedPriceList: detected } = await parseFile(file)
       if (!h.length) { setError('File appears to be empty or has no headers.'); setParsing(false); return }
       setFileName(file.name)
       setHeaders(h)
       setRows(r)
+      setDetectedPriceList(detected ?? null)
+
+      // If format detected and user is on generic type, switch to price_list
+      if (detected && importType.type !== 'price_list') {
+        const plType = IMPORT_TYPES.find(t => t.type === 'price_list')!
+        setImportType(plType)
+      }
 
       const res  = await fetch('/api/imports/preview', {
         method: 'POST',
@@ -483,7 +555,6 @@ export default function ImportsPage() {
   const handleChunkedUpload = useCallback(async () => {
     if (!importType || !rows.length) return
     setUploading(true); setError(null); abortRef.current = false
-
     const prog: UploadProgress = { totalRows: rows.length, processedRows: 0, validRows: 0, warningRows: 0, errorRows: 0, sampleErrors: [], aborted: false }
     setProgress({ ...prog })
 
@@ -491,7 +562,10 @@ export default function ImportsPage() {
       const startRes = await fetch('/api/imports/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ importType: importType.type, fileName, mapping, totalRows: rows.length }),
+        body: JSON.stringify({
+          importType: importType.type, fileName, mapping, totalRows: rows.length,
+          ...(detectedPriceList ? { priceListMeta: detectedPriceList } : {}),
+        }),
       })
       const startData = await startRes.json()
       if (!startRes.ok) { setError(startData.error ?? 'Failed to create import job'); setUploading(false); return }
@@ -522,7 +596,7 @@ export default function ImportsPage() {
       }
     } catch { setError('Upload failed. Please try again.') }
     finally { setUploading(false) }
-  }, [importType, rows, fileName, mapping])
+  }, [importType, rows, fileName, mapping, detectedPriceList])
 
   async function handleCommit() {
     if (!validation) return
@@ -545,6 +619,7 @@ export default function ImportsPage() {
     setStep('type'); setImportType(null); setFileName(''); setHeaders([]); setRows([])
     setMapping({}); setFields([]); setTemplates([]); setValidation(null); setCommitResult(null)
     setProgress(null); setSaveTemplate(false); setTemplateName(''); setError(null)
+    setDetectedPriceList(null)
     abortRef.current = false
     if (fileInputRef.current) fileInputRef.current.value = ''
   }
@@ -629,6 +704,31 @@ export default function ImportsPage() {
       {/* ── Mapping ───────────────────────────────────────────────────────── */}
       {step === 'mapping' && importType && (
         <div>
+          {/* Price list format detection banner */}
+          {detectedPriceList && (
+            <div style={{ background: '#F0FDF4', border: '1px solid #86EFAC', borderRadius: '8px', padding: '14px 18px', marginBottom: '20px' }}>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: '#166534', marginBottom: '6px' }}>
+                ✓ Standard Price List Format Detected
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '12px' }}>
+                {[
+                  { label: 'Price List Name', value: detectedPriceList.priceListName || '—' },
+                  { label: 'Target Country',  value: detectedPriceList.targetCountry  || '—' },
+                  { label: 'Currency',        value: detectedPriceList.currency       || '—' },
+                  { label: 'Item Rows',       value: fmtNum(rows.length) },
+                ].map(s => (
+                  <div key={s.label} style={{ background: '#fff', borderRadius: '6px', padding: '8px 12px' }}>
+                    <div style={{ fontSize: '11px', color: '#166534', fontWeight: 600, marginBottom: '2px' }}>{s.label}</div>
+                    <div style={{ fontSize: '13px', color: '#14532d', fontWeight: 600 }}>{s.value}</div>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: '12px', color: '#166534', marginTop: '8px' }}>
+                Row 3 was used as header. Columns auto-mapped using the standard field catalog. A Cost Set will be created on commit.
+              </div>
+            </div>
+          )}
+
           <div style={{ display: 'flex', gap: '16px', marginBottom: '16px', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div style={{ flex: 1, minWidth: '180px' }}>
               <div style={{ fontSize: '15px', fontWeight: 600, color: D.dark }}>Map columns — {fileName}</div>
@@ -850,7 +950,7 @@ function ImportHistory() {
     } finally { setLoading(false) }
   }
 
-  const LABELS: Record<string, string> = { sku_master: 'SKU Master', bom_lines: 'BOM Lines', costs: 'Costs', inventory_snapshot: 'Inventory', supplier_prices: 'Supplier Prices', manufacturing_orders: 'Mfg Orders', projects: 'Projects' }
+  const LABELS: Record<string, string> = { sku_master: 'SKU Master', bom_lines: 'BOM Lines', costs: 'Costs', inventory_snapshot: 'Inventory', price_list: 'Price List', supplier_prices: 'Supplier Prices', manufacturing_orders: 'Mfg Orders', projects: 'Projects' }
   const SCOLOR: Record<string, string> = { committed: D.success, validated: D.warning, uploading: '#1565c0', failed: D.error, pending: D.secondary, cancelled: D.secondary }
 
   return (

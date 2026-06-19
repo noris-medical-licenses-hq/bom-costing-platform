@@ -1,0 +1,105 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { z } from 'zod'
+import { createServerSupabaseClient } from '@/backend/lib/supabase'
+
+type RouteParams = { params: { id: string } }
+
+const Schema = z.object({
+  siteCode:     z.string().min(1),
+  reason:       z.string().min(3).max(2000),
+  reasonCode:   z.enum(['end_of_life', 'restructuring', 'duplicate', 'data_error', 'other']),
+})
+
+export async function POST(request: NextRequest, { params }: RouteParams) {
+  try {
+    const client = await createServerSupabaseClient()
+    const { data: { user } } = await client.auth.getUser()
+    if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+    const orgIdResult = await client.rpc('auth_org_id').maybeSingle()
+    const orgId = (orgIdResult.data as string | null) ?? ''
+
+    const body = await request.json()
+    const parsed = Schema.safeParse(body)
+    if (!parsed.success) return NextResponse.json({ error: 'Validation failed', details: parsed.error.flatten() }, { status: 400 })
+
+    const db = client as any
+    const { data: site } = await db.from('sites')
+      .select('id, code, name, status, organization_id')
+      .eq('id', params.id)
+      .single()
+
+    if (!site) return NextResponse.json({ error: 'Site not found' }, { status: 404 })
+    if (site.organization_id !== orgId) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    if (site.status !== 'archived') return NextResponse.json({ error: 'Only archived sites can be requested for deletion' }, { status: 409 })
+
+    // Verify site code matches
+    if (parsed.data.siteCode.toUpperCase() !== site.code.toUpperCase()) {
+      return NextResponse.json({ error: 'Site code does not match — deletion request rejected' }, { status: 422 })
+    }
+
+    // Count linked entities
+    const [wRes, cbRes, csRes, isRes] = await Promise.all([
+      db.from('warehouses').select('id', { count: 'exact', head: true }).eq('site_id', params.id),
+      db.from('site_cost_builds').select('id', { count: 'exact', head: true }).eq('site_id', params.id),
+      db.from('cost_sets').select('id', { count: 'exact', head: true }).eq('site_id', params.id),
+      db.from('inventory_snapshots').select('id', { count: 'exact', head: true }).eq('scope_site_id', params.id),
+    ])
+
+    const linkedCounts = {
+      warehouses:          wRes.count ?? 0,
+      cost_builds:         cbRes.count ?? 0,
+      cost_sets:           csRes.count ?? 0,
+      inventory_snapshots: isRes.count ?? 0,
+    }
+
+    const hasHistoricalData = Object.values(linkedCounts).some(c => c > 0)
+    if (hasHistoricalData && linkedCounts.cost_builds > 0 || hasHistoricalData && linkedCounts.inventory_snapshots > 0) {
+      // Hard block: historical cost builds or inventory snapshots exist — cannot delete
+      return NextResponse.json({
+        error: 'Cannot request deletion: site has historical cost builds or inventory snapshots. Archive only.',
+        linkedCounts,
+        blocked: true,
+      }, { status: 422 })
+    }
+
+    const now = new Date().toISOString()
+    const pendingDeleteAt = new Date(Date.now() + 72 * 60 * 60 * 1000).toISOString()
+
+    await db.from('sites').update({
+      status:            'pending_delete',
+      pending_delete_at: pendingDeleteAt,
+      delete_reason:     `[${parsed.data.reasonCode}] ${parsed.data.reason}`,
+      updated_by:        user.id,
+    }).eq('id', params.id)
+
+    await db.from('audit_log').insert({
+      organization_id: orgId,
+      event_type:      'site_delete_requested',
+      event_category:  'admin',
+      table_name:      'sites',
+      record_id:       params.id,
+      performed_by:    user.id,
+      performed_at:    now,
+      new_values:      { status: 'pending_delete', pending_delete_at: pendingDeleteAt },
+      metadata:        {
+        site_code:     site.code,
+        site_name:     site.name,
+        reason_code:   parsed.data.reasonCode,
+        reason:        parsed.data.reason,
+        linked_counts: linkedCounts,
+        recoverable_until: pendingDeleteAt,
+      },
+    })
+
+    return NextResponse.json({
+      success: true,
+      status: 'pending_delete',
+      pendingDeleteAt,
+      linkedCounts,
+    })
+  } catch (err) {
+    console.error('[POST /api/sites/[id]/delete-request]', err)
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 })
+  }
+}

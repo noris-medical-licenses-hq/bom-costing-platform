@@ -10,6 +10,7 @@ export type ImportType =
   | 'cost_rules'
   | 'rule_exceptions'
   | 'virtual_components'
+  | 'price_list'
 
 export interface TargetField {
   key: string
@@ -54,6 +55,13 @@ export const TARGET_FIELDS: Record<ImportType, TargetField[]> = {
     { key: 'uom',           label: 'UOM',           required: false, type: 'string' },
     { key: 'notes',         label: 'Notes',         required: false, type: 'string' },
   ],
+  price_list: [
+    { key: 'part_number', label: 'Part Number',         required: true,  type: 'string', hint: 'Must match an existing SKU' },
+    { key: 'description', label: 'Product Description', required: false, type: 'string' },
+    { key: 'quantity',    label: 'Quantity / Pack Size', required: false, type: 'number' },
+    { key: 'unit_price',  label: 'Unit Price',           required: true,  type: 'number' },
+    { key: 'currency',    label: 'Currency',             required: false, type: 'string' },
+  ],
   // Phase-2 types — structure defined, commit not yet implemented
   supplier_prices:    [],
   suppliers:          [],
@@ -69,6 +77,7 @@ export const IMPORT_TYPE_LABELS: Record<ImportType, string> = {
   bom_lines:          'BOM Lines',
   costs:              'Costs',
   inventory_snapshot: 'Inventory Snapshot',
+  price_list:         'Price List',
   supplier_prices:    'Supplier Prices',
   suppliers:          'Suppliers',
   sites:              'Sites',
