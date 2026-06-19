@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { NavUser } from './components/NavUser'
+import { GlobalSearch } from './components/GlobalSearch'
 
 export const metadata: Metadata = {
   title: 'BOM Costing Platform — Noris Medical',
@@ -7,15 +8,18 @@ export const metadata: Metadata = {
 }
 
 const NAV_LINKS = [
-  { href: '/',                 label: 'Dashboard'        },
-  { href: '/boms',             label: 'BOMs'             },
-  { href: '/cost-builds',      label: 'Cost Builds'      },
-  { href: '/inventory',        label: 'Inventory'        },
-  { href: '/sites',            label: 'Sites'            },
-  { href: '/validation',       label: 'Validation'       },
-  { href: '/strategy-status',  label: 'Strategy Status'  },
-  { href: '/imports',          label: 'Imports'          },
-  { href: '/audit',            label: 'Audit'            },
+  { href: '/',              label: 'Dashboard'    },
+  { href: '/imports',       label: 'Imports'      },
+  { href: '/price-lists',   label: 'Price Lists'  },
+  { href: '/boms',          label: 'BOMs'         },
+  { href: '/cost-builds',   label: 'Cost Builds'  },
+  { href: '/inventory',     label: 'Inventory'    },
+  { href: '/sites',         label: 'Sites'        },
+  { href: '/warehouses',    label: 'Warehouses'   },
+  { href: '/suppliers',     label: 'Suppliers'    },
+  { href: '/fx-rates',      label: 'FX Rates'     },
+  { href: '/audit',         label: 'Audit'        },
+  { href: '/admin',         label: 'Admin'        },
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -24,25 +28,26 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body style={{ margin: 0, fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif', background: '#F8F9FA', color: '#222222' }}>
 
         <header style={{ background: '#FFFFFF', borderBottom: '1px solid #E5E7EB', position: 'sticky', top: 0, zIndex: 100 }}>
-          <div style={{ maxWidth: '1200px', margin: '0 auto', padding: '0 24px', height: '56px', display: 'flex', alignItems: 'center' }}>
-            <a href="/" style={{ textDecoration: 'none', marginRight: '32px', display: 'flex', flexDirection: 'column', lineHeight: 1.15 }}>
+          <div style={{ maxWidth: '1400px', margin: '0 auto', padding: '0 20px', height: '56px', display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <a href="/" style={{ textDecoration: 'none', marginRight: '16px', display: 'flex', flexDirection: 'column', lineHeight: 1.15, flexShrink: 0 }}>
               <span style={{ fontSize: '15px', fontWeight: 700, color: '#C62839', letterSpacing: '-0.3px' }}>Noris Medical</span>
-              <span style={{ fontSize: '11px', color: '#666666' }}>BOM Costing Platform</span>
+              <span style={{ fontSize: '11px', color: '#666666' }}>BOM Costing</span>
             </a>
 
-            <nav style={{ display: 'flex', gap: '2px', flex: 1 }}>
+            <nav style={{ display: 'flex', gap: '1px', flex: 1, flexWrap: 'nowrap', overflow: 'hidden' }}>
               {NAV_LINKS.map(link => (
-                <a key={link.href} href={link.href} style={{ fontSize: '14px', fontWeight: 500, color: '#444444', textDecoration: 'none', padding: '6px 12px', borderRadius: '6px' }}>
+                <a key={link.href} href={link.href} style={{ fontSize: '13px', fontWeight: 500, color: '#444444', textDecoration: 'none', padding: '5px 9px', borderRadius: '5px', whiteSpace: 'nowrap' }}>
                   {link.label}
                 </a>
               ))}
             </nav>
 
+            <GlobalSearch />
             <NavUser />
           </div>
         </header>
 
-        <main style={{ maxWidth: '1200px', margin: '0 auto', padding: '32px 24px' }}>
+        <main style={{ maxWidth: '1400px', margin: '0 auto', padding: '28px 20px' }}>
           {children}
         </main>
 

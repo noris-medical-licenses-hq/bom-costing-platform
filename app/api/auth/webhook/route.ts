@@ -31,19 +31,30 @@ export async function POST(request: NextRequest) {
 
   try {
     const serviceClient = createServiceSupabaseClient()
-    await createProfile({
-      user_id: payload.record.id,
-      organization_id: defaultOrgId,
-      email: payload.record.email,
-      full_name: (payload.record.user_metadata?.full_name as string) ?? null,
-      role: 'viewer',
-      is_active: true,
-    }, serviceClient)
+    const userId     = payload.record.id
+    const email      = payload.record.email
+    const fullName   = (payload.record.user_metadata?.full_name as string) ?? email.split('@')[0]
+    // invited_role may be pre-set by the admin invite flow; default to 'viewer'
+    const invitedRole = (payload.record.user_metadata?.invited_role as string) ?? 'viewer'
+
+    // Upsert: if the admin invite API already created the profile (with correct role),
+    // this is a no-op (ignoreDuplicates). If profile doesn't exist yet, create it.
+    const { error } = await (serviceClient as any)
+      .from('profiles')
+      .upsert({
+        id:              userId,
+        organization_id: defaultOrgId,
+        email,
+        full_name:       fullName,
+        role:            invitedRole,
+        is_active:       true,
+      }, { onConflict: 'id', ignoreDuplicates: true })
+
+    if (error) throw error
 
     return NextResponse.json({ ok: true })
   } catch (err) {
-    console.error('[auth/webhook] Failed to create profile:', err)
-    // Return 500 so Supabase retries the webhook
+    console.error('[auth/webhook] Failed to upsert profile:', err)
     return new NextResponse('Internal server error', { status: 500 })
   }
 }

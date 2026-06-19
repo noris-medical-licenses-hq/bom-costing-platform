@@ -64,6 +64,19 @@ export async function POST(request: NextRequest) {
 
     const { siteId, name, description, defaultStrategy, priceListVersionId, notes } = parsed.data
 
+    // For PRICE_LIST strategy, the site must have a country code so the engine
+    // can resolve the correct country price list at run time.
+    if (defaultStrategy === 'PRICE_LIST') {
+      const { data: site } = await (client as any).from('sites').select('country, name').eq('id', siteId).single()
+      if (!site) return NextResponse.json({ error: 'Site not found' }, { status: 404 })
+      if (!site.country) {
+        return NextResponse.json({
+          error: `Site "${site.name}" has no country code set. Go to Sites → Edit Site and add a 2-letter country code (e.g. DE, FR, IT) before creating a Price List cost build.`,
+          code: 'SITE_MISSING_COUNTRY',
+        }, { status: 400 })
+      }
+    }
+
     const svc = createServiceSupabaseClient()
     const svcDb = svc as any
 
