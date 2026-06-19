@@ -6,6 +6,9 @@
  * that the import-trace API returns correct provenance information.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { NextRequest } from 'next/server'
+
+const req = (url: string) => new NextRequest(url)
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -378,7 +381,7 @@ describe('GET /api/import-trace/[rowId]', () => {
     vi.mocked(sbMod.createServerSupabaseClient).mockResolvedValue(client as any)
     const { GET } = await import('@/app/api/import-trace/[rowId]/route')
     const res = await GET(
-      new Request('http://localhost/api/import-trace/row-1'),
+      req('http://localhost/api/import-trace/row-1'),
       { params: { rowId: 'row-1' } }
     )
     expect(res.status).toBe(401)
@@ -389,7 +392,7 @@ describe('GET /api/import-trace/[rowId]', () => {
     vi.mocked(sbMod.createServerSupabaseClient).mockResolvedValue(client as any)
     const { GET } = await import('@/app/api/import-trace/[rowId]/route')
     const res = await GET(
-      new Request('http://localhost/api/import-trace/nonexistent'),
+      req('http://localhost/api/import-trace/nonexistent'),
       { params: { rowId: 'nonexistent' } }
     )
     expect(res.status).toBe(404)
@@ -414,7 +417,7 @@ describe('GET /api/import-trace/[rowId]', () => {
     vi.mocked(sbMod.createServerSupabaseClient).mockResolvedValue(client as any)
     const { GET } = await import('@/app/api/import-trace/[rowId]/route')
     const res = await GET(
-      new Request('http://localhost/api/import-trace/ijr-001'),
+      req('http://localhost/api/import-trace/ijr-001'),
       { params: { rowId: 'ijr-001' } }
     )
     expect(res.status).toBe(200)
@@ -447,7 +450,7 @@ describe('GET /api/import-trace/[rowId]', () => {
     vi.mocked(sbMod.createServerSupabaseClient).mockResolvedValue(client as any)
     const { GET } = await import('@/app/api/import-trace/[rowId]/route')
     const res = await GET(
-      new Request('http://localhost/api/import-trace/ijr-002'),
+      req('http://localhost/api/import-trace/ijr-002'),
       { params: { rowId: 'ijr-002' } }
     )
     expect(res.status).toBe(200)

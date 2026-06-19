@@ -132,9 +132,12 @@ describe('A-1 — audit_log event_category uses admin (not security/auth)', () =
   it('PATCH /api/admin/users/[id] writes event_category: admin', async () => {
     let capturedRow: Record<string, unknown> = {}
     const svc = mockServiceClient({ insertCapture: row => { capturedRow = row } })
-    const fromOrig = svc.from.bind(svc)
-    svc.from = (table: string) => {
-      const base = fromOrig(table)
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const svcAny: any = svc
+    const fromOrig = svcAny.from.bind(svcAny)
+    svcAny.from = (table: string) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const base: any = fromOrig(table)
       if (table === 'profiles') {
         return {
           ...base,

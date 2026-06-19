@@ -66,8 +66,8 @@ describe('ComparisonResult shape', () => {
 
 describe('currency mismatch in comparison rows', () => {
   it('marks row as currency_mismatch when resolved currency differs from buildCurrency', () => {
-    const buildCurrency = 'EUR'
-    const resolvedCurrency = 'USD'
+    const buildCurrency: string = 'EUR'
+    const resolvedCurrency: string = 'USD'
     const status = resolvedCurrency !== buildCurrency ? 'currency_mismatch' : 'ok'
     expect(status).toBe('currency_mismatch')
   })
@@ -115,7 +115,7 @@ describe('zero cost detection', () => {
   })
 
   it('does not mark positive cost row as zero', () => {
-    const resolvedCost = 12.45
+    const resolvedCost: number = 12.45
     const status = resolvedCost === 0 ? 'zero' : 'ok'
     expect(status).toBe('ok')
   })
