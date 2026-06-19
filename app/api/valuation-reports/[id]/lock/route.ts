@@ -36,7 +36,7 @@ export async function POST(
 
     await svcDb.from('audit_log').insert({
       organization_id: orgId,
-      event_type:      'status_change',
+      event_type:      'valuation_report_locked',
       event_category:  'data',
       table_name:      'valuation_reports',
       record_id:       params.id,

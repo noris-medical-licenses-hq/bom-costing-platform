@@ -37,8 +37,6 @@ const IMPORT_TYPES: ImportTypeSummary[] = [
   { type: 'price_list',           label: 'Price List',          description: 'Standard price list (supports auto-detection of name, country, currency from header rows). Creates a Cost Set.' },
   { type: 'purchase_history',     label: 'Purchase History',    description: 'ERP purchase records for LAST_PURCHASE and AVERAGE_PURCHASE costing strategies. Include site_code or select a default site.' },
   { type: 'supplier_prices',      label: 'Supplier Prices',     description: 'Quoted / contracted prices per SKU per supplier.' },
-  { type: 'manufacturing_orders', label: 'Manufacturing Orders', description: 'Production / work orders with operations and execution data.' },
-  { type: 'projects',             label: 'Projects',            description: 'Project and customer master data.' },
 ]
 
 const ALL_OR_NOTHING = new Set(['bom_lines', 'costs'])
@@ -1145,7 +1143,7 @@ function ImportHistory() {
     } finally { setLoading(false) }
   }
 
-  const LABELS: Record<string, string> = { sku_master: 'SKU Master', bom_lines: 'BOM Lines', costs: 'Costs', inventory_snapshot: 'Inventory', price_list: 'Price List', purchase_history: 'Purchase History', supplier_prices: 'Supplier Prices', manufacturing_orders: 'Mfg Orders', projects: 'Projects' }
+  const LABELS: Record<string, string> = { sku_master: 'SKU Master', bom_lines: 'BOM Lines', costs: 'Costs', inventory_snapshot: 'Inventory', price_list: 'Price List', purchase_history: 'Purchase History', supplier_prices: 'Supplier Prices' }
   const SCOLOR: Record<string, string> = { committed: D.success, validated: D.warning, uploading: '#1565c0', failed: D.error, pending: D.secondary, cancelled: D.secondary }
 
   return (

@@ -34,7 +34,7 @@ const STRATEGY_LABEL: Record<string, string> = {
 
 const STATUS_COLOR: Record<string, string> = {
   draft: D.secondary, running: D.warning, complete: D.blue,
-  approved: D.teal, locked: D.dark, failed: D.error, archived: D.secondary,
+  complete_with_warnings: D.warning, failed: D.error, archived: D.secondary,
 }
 const ITEM_TYPE_COLOR: Record<string, string> = {
   PURCHASED: D.blue, MANUFACTURED: D.success, MAKE_OR_BUY: D.warning, SERVICE: D.purple, MANUAL: D.secondary,
