@@ -61,26 +61,36 @@ export default function TracesPage() {
   const [error, setError] = useState<string | null>(null)
 
   async function loadTrace() {
-    if (!traceId.trim()) return
+    const id = traceId.trim()
+    if (!id) return
     setLoading(true)
     setError(null)
     setHeader(null)
     setLines([])
     setRuleTraces([])
 
-    const [hRes, lRes, rRes] = await Promise.all([
-      fetch(`/api/traces/${traceId}`),
-      fetch(`/api/traces/${traceId}/lines`),
-      fetch(`/api/traces/${traceId}/rules`),
-    ])
+    try {
+      const [hRes, lRes, rRes] = await Promise.all([
+        fetch(`/api/traces/${id}`),
+        fetch(`/api/traces/${id}/lines`),
+        fetch(`/api/traces/${id}/rules`),
+      ])
 
-    const [hJson, lJson, rJson] = await Promise.all([hRes.json(), lRes.json(), rRes.json()])
-    setLoading(false)
+      const [hJson, lJson, rJson] = await Promise.all([
+        hRes.json(),
+        lRes.ok ? lRes.json() : Promise.resolve({ data: [] }),
+        rRes.ok ? rRes.json() : Promise.resolve({ data: [] }),
+      ])
 
-    if (!hRes.ok) { setError(hJson.error ?? 'Trace not found'); return }
-    setHeader(hJson.data)
-    setLines(lJson.data ?? [])
-    setRuleTraces(rJson.data ?? [])
+      setLoading(false)
+      if (!hRes.ok) { setError(hJson.error ?? 'Trace not found'); return }
+      setHeader(hJson.data)
+      setLines(lJson.data ?? [])
+      setRuleTraces(rJson.data ?? [])
+    } catch (err) {
+      setLoading(false)
+      setError('Network error — could not load trace')
+    }
   }
 
   const appliedRules = ruleTraces.filter(r => r.was_applied)

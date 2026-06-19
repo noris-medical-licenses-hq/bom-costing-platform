@@ -29,6 +29,7 @@ const NAV_LINKS = [
   { href: '/validation',      label: 'Validation'       },
   { href: '/audit',           label: 'Audit'            },
   { href: '/strategy-status', label: 'Strategy Status'  },
+  { href: '/readiness',       label: 'Readiness'        },
 ]
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
