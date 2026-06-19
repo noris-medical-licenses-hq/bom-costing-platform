@@ -18,6 +18,7 @@ const NAV_LINKS = [
   { href: '/mfg-structures',   label: 'Mfg Structures' },
   { href: '/cost-quality',     label: 'Cost Quality'  },
   { href: '/data-quality',     label: 'Data Quality'  },
+  { href: '/impact-analysis',  label: 'Impact'        },
   { href: '/inventory',        label: 'Inventory'     },
   { href: '/sites',         label: 'Sites'        },
   { href: '/warehouses',    label: 'Warehouses'   },
