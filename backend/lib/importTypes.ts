@@ -31,8 +31,17 @@ export const TARGET_FIELDS: Record<ImportType, TargetField[]> = {
     { key: 'active',      label: 'Active',      required: false, type: 'boolean' },
   ],
   bom_lines: [
-    { key: 'parent_sku',  label: 'Parent SKU',  required: true,  type: 'string' },
-    { key: 'child_sku',   label: 'Child SKU',   required: true,  type: 'string' },
+    // ── Flat mode (parent/child pairs) ────────────────────────────────────────
+    { key: 'parent_sku',  label: 'Parent SKU',  required: false, type: 'string', hint: 'Flat mode: the finished product or sub-assembly this line belongs to' },
+    { key: 'child_sku',   label: 'Child SKU',   required: false, type: 'string', hint: 'Flat mode: the component being used' },
+    // ── Level mode (hierarchical tree) ────────────────────────────────────────
+    // Map a Level column to enable multi-level BOM import from a single flat file.
+    // Level 0 = root / finished product. Level 1 = direct child. Level N = child of
+    // the nearest preceding Level N-1 row. Level cannot jump by more than +1.
+    { key: 'sku',         label: 'SKU',         required: false, type: 'string', hint: 'Level mode: the SKU at this row (root at Level 0, component at Level 1+)' },
+    { key: 'description', label: 'Description', required: false, type: 'string', hint: 'Level mode: component description — used when the SKU is auto-created' },
+    { key: 'level',       label: 'Level',       required: false, type: 'number', hint: 'Level mode: hierarchy depth (0=root, 1=direct child, 2=grandchild…)' },
+    // ── Common ────────────────────────────────────────────────────────────────
     { key: 'quantity',    label: 'Quantity',    required: true,  type: 'number' },
     { key: 'bom_version', label: 'BOM Version', required: false, type: 'string' },
     { key: 'notes',       label: 'Notes',       required: false, type: 'string' },

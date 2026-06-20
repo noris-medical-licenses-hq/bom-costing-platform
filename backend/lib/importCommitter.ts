@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto'
 import type { SupabaseServiceClient } from './supabase'
 import type { ImportType } from './importTypes'
 import type { RowValidationResult } from './importValidators'
@@ -29,12 +30,47 @@ export interface PurchaseHistoryQualityMetrics {
   duplicateRefs:      number
 }
 
+export interface BomImportSummary {
+  totalRows:            number
+  bomLinesCreated:      number
+  maxDepth:             number
+  autoCreatedSkusCount: number
+  warningCount:         number
+  errorCount:           number
+}
+
 export interface CommitResult {
   committed:               number
   skipped:                 number
   errors:                  Array<{ row: number; error: string }>
   qualityMetrics?:         PriceListQualityMetrics
   purchaseHistoryMetrics?: PurchaseHistoryQualityMetrics
+  bomSummary?:             BomImportSummary
+}
+
+// ─── SKU prefix classification ────────────────────────────────────────────────
+// Exported so it can be unit-tested independently of DB interactions.
+//
+// Classification rules (per BOM onboarding convention):
+//   PR*  →  make_buy = 'buy',  classification_status = 'classified'
+//   NM*  →  make_buy = 'make', classification_status = 'classified'
+//   NG*  →  make_buy = 'make', classification_status = 'classified'
+//   else →  make_buy = null,   classification_status = 'needs_review'
+//
+// The returned values are defaults only. Users can edit make_buy at any time.
+export function classifySkuByPrefix(partNumber: string): {
+  makeBuy:              'make' | 'buy' | null
+  classificationStatus: 'classified' | 'needs_review'
+  itemType:             'purchased_part' | 'sub_assembly'
+} {
+  const upper = partNumber.toUpperCase()
+  if (upper.startsWith('PR')) {
+    return { makeBuy: 'buy',  classificationStatus: 'classified', itemType: 'purchased_part' }
+  }
+  if (upper.startsWith('NM') || upper.startsWith('NG')) {
+    return { makeBuy: 'make', classificationStatus: 'classified', itemType: 'sub_assembly' }
+  }
+  return { makeBuy: null, classificationStatus: 'needs_review', itemType: 'purchased_part' }
 }
 
 // Rows are processed in batches for all DB writes. This keeps individual
@@ -61,7 +97,7 @@ export async function commitImport(
       await commitSkuMaster(commitableRows, orgId, userId, result, client)
       break
     case 'bom_lines':
-      await commitBomLines(commitableRows, orgId, userId, result, client)
+      await commitBomLines(commitableRows, jobId, orgId, userId, result, client)
       break
     case 'costs':
       await commitCosts(commitableRows, orgId, userId, result, client)
@@ -149,12 +185,204 @@ async function commitSkuMaster(
 
 async function commitBomLines(
   rows: RowValidationResult[],
+  jobId: string,
   orgId: string,
   userId: string,
   result: CommitResult,
   client: SupabaseServiceClient
 ): Promise<void> {
   const db = client as any
+  const hasLevel = rows.some(
+    r => r.mappedData['level'] !== undefined && r.mappedData['level'] !== null
+  )
+
+  if (hasLevel) {
+    await commitBomLinesLevelMode(rows, jobId, orgId, userId, result, db)
+  } else {
+    await commitBomLinesFlatMode(rows, jobId, orgId, userId, result, db)
+  }
+}
+
+// ─── Shared: find or create a BOM record + new draft version ─────────────────
+
+async function findOrCreateBomVersion(
+  parentSkuId: string,
+  orgId: string,
+  userId: string,
+  db: any
+): Promise<{ versionId: string } | { error: string }> {
+  let { data: bom } = await db.from('boms')
+    .select('id')
+    .eq('organization_id', orgId)
+    .eq('sku_id', parentSkuId)
+    .maybeSingle()
+
+  if (!bom) {
+    const { data: newBom, error: bomErr } = await db.from('boms').insert({
+      organization_id: orgId,
+      sku_id:          parentSkuId,
+      created_by:      userId,
+      updated_by:      userId,
+    }).select('id').single()
+    if (bomErr || !newBom) return { error: `Failed to create BOM: ${bomErr?.message}` }
+    bom = newBom
+  }
+
+  const { data: maxVer } = await db.from('bom_versions')
+    .select('version_number')
+    .eq('bom_id', bom.id)
+    .order('version_number', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  const { data: version, error: verErr } = await db.from('bom_versions').insert({
+    organization_id: orgId,
+    bom_id:          bom.id,
+    version_number:  (maxVer?.version_number ?? 0) + 1,
+    status:          'draft',
+    effective_from:  new Date().toISOString().slice(0, 10),
+    created_by:      userId,
+    updated_by:      userId,
+  }).select('id').single()
+
+  if (verErr || !version) return { error: `Failed to create BOM version: ${verErr?.message}` }
+  return { versionId: version.id }
+}
+
+// ─── Shared: auto-create missing SKUs and warn about them ────────────────────
+//
+// MVP Limitation: auto-created SKUs are committed to the SKU master before BOM
+// lines are inserted. If the subsequent BOM line commit fails, the SKU remains
+// in the master (marked auto_created = true, classifiable by the user).
+
+interface AutoCreatedSkuInfo {
+  partNumber:   string
+  skuId:        string
+  makeBuy:      'make' | 'buy' | null
+  status:       'classified' | 'needs_review'
+}
+
+async function autoCreateMissingSkus(
+  missingPartNumbers: string[],
+  allRows: RowValidationResult[],
+  jobId: string,
+  orgId: string,
+  userId: string,
+  skuMap: Map<string, string>,  // mutated in place with new IDs
+  db: any
+): Promise<AutoCreatedSkuInfo[]> {
+  if (missingPartNumbers.length === 0) return []
+
+  // Build a lookup from part number to description (available in level mode).
+  const descriptionByPn = new Map<string, string>()
+  for (const r of allRows) {
+    const pn  = String(r.mappedData['sku'] ?? '').trim()
+    const desc = String(r.mappedData['description'] ?? '').trim()
+    if (pn && desc && !descriptionByPn.has(pn)) descriptionByPn.set(pn, desc)
+  }
+
+  const records = missingPartNumbers.map(pn => {
+    const { makeBuy, classificationStatus, itemType } = classifySkuByPrefix(pn)
+    const desc = descriptionByPn.get(pn) ?? null
+    return {
+      organization_id:        orgId,
+      part_number:            pn,
+      name:                   desc ?? pn,
+      description:            desc,
+      item_type:              itemType,
+      make_buy:               makeBuy,
+      classification_status:  classificationStatus,
+      unit_of_measure:        'EA',
+      status:                 'active',
+      is_regulated:           false,
+      auto_created:           true,
+      created_source:         'BOM_IMPORT',
+      original_import_job_id: jobId,
+      created_by:             userId,
+      updated_by:             userId,
+    }
+  })
+
+  // Upsert with ignoreDuplicates: if another concurrent import already created
+  // the SKU, the existing record is left unchanged.
+  await db.from('skus').upsert(
+    records,
+    { onConflict: 'organization_id,part_number', ignoreDuplicates: true }
+  )
+
+  // Re-query to get IDs for all processed part numbers (newly created or pre-existing).
+  const { data: resolvedRows } = await db.from('skus')
+    .select('id, part_number')
+    .eq('organization_id', orgId)
+    .in('part_number', missingPartNumbers)
+
+  const autoCreated: AutoCreatedSkuInfo[] = []
+  for (const s of resolvedRows ?? []) {
+    skuMap.set(s.part_number, s.id)
+    const { makeBuy, classificationStatus } = classifySkuByPrefix(s.part_number)
+    autoCreated.push({
+      partNumber: s.part_number,
+      skuId:      s.id,
+      makeBuy,
+      status:     classificationStatus,
+    })
+  }
+  return autoCreated
+}
+
+// Appends AUTO_CREATED_SKU warnings to the import_job_rows that triggered each
+// auto-creation so they appear in the export and in the UI issue list.
+async function writeAutoCreatedSkuWarnings(
+  autoCreated: AutoCreatedSkuInfo[],
+  allRows: RowValidationResult[],
+  db: any
+): Promise<void> {
+  if (autoCreated.length === 0) return
+
+  const autoCreatedPns = new Set(autoCreated.map(a => a.partNumber))
+
+  // Map rowId → [warning messages]
+  const rowWarnings = new Map<string, string[]>()
+  const skuFields = ['sku', 'parent_sku', 'child_sku'] as const
+  for (const r of allRows) {
+    if (!r.rowId) continue
+    for (const field of skuFields) {
+      const pn = String(r.mappedData[field] ?? '').trim()
+      if (pn && autoCreatedPns.has(pn)) {
+        const msgs = rowWarnings.get(r.rowId) ?? []
+        const msg  = `SKU "${pn}" was automatically created during BOM import`
+        if (!msgs.includes(msg)) msgs.push(msg)
+        rowWarnings.set(r.rowId, msgs)
+      }
+    }
+  }
+
+  if (rowWarnings.size === 0) return
+
+  const rowIds = Array.from(rowWarnings.keys())
+  const { data: existingRows } = await db.from('import_job_rows')
+    .select('id, warnings')
+    .in('id', rowIds)
+
+  for (const existing of existingRows ?? []) {
+    const current  = (existing.warnings as string[] | null) ?? []
+    const toAppend = rowWarnings.get(existing.id) ?? []
+    await db.from('import_job_rows')
+      .update({ warnings: [...current, ...toAppend] })
+      .eq('id', existing.id)
+  }
+}
+
+// ─── Flat mode commit ─────────────────────────────────────────────────────────
+
+async function commitBomLinesFlatMode(
+  rows: RowValidationResult[],
+  jobId: string,
+  orgId: string,
+  userId: string,
+  result: CommitResult,
+  db: any
+): Promise<void> {
   const allSkuNums = new Set<string>()
   for (const r of rows) {
     const p = String(r.mappedData['parent_sku'] ?? '').trim()
@@ -171,6 +399,12 @@ async function commitBomLines(
   const skuMap = new Map<string, string>()
   for (const s of skuRows ?? []) skuMap.set(s.part_number, s.id)
 
+  // Auto-create any SKUs that don't exist yet.
+  const missing = Array.from(allSkuNums).filter(pn => !skuMap.has(pn))
+  const autoCreated = await autoCreateMissingSkus(missing, rows, jobId, orgId, userId, skuMap, db)
+  await writeAutoCreatedSkuWarnings(autoCreated, rows, db)
+
+  // Group rows by parent SKU and commit each BOM.
   const parentGroups = new Map<string, RowValidationResult[]>()
   for (const r of rows) {
     const p = String(r.mappedData['parent_sku'] ?? '').trim()
@@ -179,86 +413,51 @@ async function commitBomLines(
     parentGroups.set(p, arr)
   }
 
+  let errorCount = result.errors.length
+
   for (const [parentSku, parentRows] of parentGroups) {
     const parentId = skuMap.get(parentSku)
     if (!parentId) {
       for (const r of parentRows) {
-        result.errors.push({ row: r.rowNumber, error: `Parent SKU "${parentSku}" not found in system — import it via SKU Master first` })
+        result.errors.push({ row: r.rowNumber, error: `Parent SKU "${parentSku}" could not be resolved` })
         result.skipped++
       }
       continue
     }
 
-    let { data: bom } = await db.from('boms')
-      .select('id')
-      .eq('organization_id', orgId)
-      .eq('sku_id', parentId)
-      .maybeSingle()
-
-    if (!bom) {
-      const { data: newBom, error: bomErr } = await db.from('boms').insert({
-        organization_id: orgId,
-        sku_id:          parentId,
-        created_by:      userId,
-        updated_by:      userId,
-      }).select('id').single()
-      if (bomErr || !newBom) {
-        for (const r of parentRows) result.errors.push({ row: r.rowNumber, error: `Failed to create BOM: ${bomErr?.message}` })
-        continue
-      }
-      bom = newBom
-    }
-
-    const { data: maxVer } = await db.from('bom_versions')
-      .select('version_number')
-      .eq('bom_id', bom.id)
-      .order('version_number', { ascending: false })
-      .limit(1)
-      .maybeSingle()
-
-    const { data: version, error: verErr } = await db.from('bom_versions').insert({
-      organization_id: orgId,
-      bom_id:          bom.id,
-      version_number:  (maxVer?.version_number ?? 0) + 1,
-      status:          'draft',
-      effective_from:  new Date().toISOString().slice(0, 10),
-      created_by:      userId,
-      updated_by:      userId,
-    }).select('id').single()
-
-    if (verErr || !version) {
-      for (const r of parentRows) result.errors.push({ row: r.rowNumber, error: `Failed to create BOM version: ${verErr?.message}` })
+    const bomResult = await findOrCreateBomVersion(parentId, orgId, userId, db)
+    if ('error' in bomResult) {
+      for (const r of parentRows) result.errors.push({ row: r.rowNumber, error: bomResult.error })
       continue
     }
 
-    // Bulk insert all lines for this parent
     const lineRecords = []
     for (const r of parentRows) {
       const childSku = String(r.mappedData['child_sku'] ?? '').trim()
       const childId  = skuMap.get(childSku)
       if (!childId) {
-        result.errors.push({ row: r.rowNumber, error: `Child SKU "${childSku}" not found in system` })
+        result.errors.push({ row: r.rowNumber, error: `Child SKU "${childSku}" could not be resolved` })
         result.skipped++
         continue
       }
       lineRecords.push({
-        organization_id:    orgId,
-        bom_version_id:     version.id,
-        line_type:          'sku',
-        sku_id:             childId,
-        quantity:           Number(r.mappedData['quantity']) || 1,
-        unit_of_measure:    'EA',
-        import_job_row_id:  r.rowId ?? null,
-        created_by:         userId,
-        updated_by:         userId,
-        _rowNumber:         r.rowNumber,
+        organization_id:   orgId,
+        bom_version_id:    bomResult.versionId,
+        line_type:         'sku',
+        sku_id:            childId,
+        quantity:          Number(r.mappedData['quantity']) || 1,
+        unit_of_measure:   'EA',
+        import_job_row_id: r.rowId ?? null,
+        created_by:        userId,
+        updated_by:        userId,
+        _rowNumber:        r.rowNumber,
       })
     }
 
     for (let i = 0; i < lineRecords.length; i += DB_BATCH) {
-      const batch = lineRecords.slice(i, i + DB_BATCH)
+      const batch       = lineRecords.slice(i, i + DB_BATCH)
       const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
-      const { error } = await db.from('bom_lines').insert(insertBatch)
+      const { error }   = await db.from('bom_lines').insert(insertBatch)
       if (error) {
         for (const r of batch) result.errors.push({ row: r._rowNumber, error: error.message })
       } else {
@@ -266,6 +465,182 @@ async function commitBomLines(
       }
     }
   }
+
+  const newErrors = result.errors.length - errorCount
+  result.bomSummary = {
+    totalRows:            rows.length,
+    bomLinesCreated:      result.committed,
+    maxDepth:             1,  // flat mode is always depth 1
+    autoCreatedSkusCount: autoCreated.length,
+    warningCount:         rows.filter(r => r.status === 'warning').length + autoCreated.length,
+    errorCount:           newErrors,
+  }
+  await saveBomSummaryToJob(jobId, result.bomSummary, db)
+}
+
+// ─── Level mode commit ────────────────────────────────────────────────────────
+//
+// The BOM tree is encoded in a flat file using a Level column:
+//   Level 0 = root finished product (identifies the BOM, not itself a line)
+//   Level 1 = direct child of the root
+//   Level N = child of the nearest preceding Level N-1 row
+//
+// Pre-generated UUIDs allow all lines in a BOM group to be bulk-inserted while
+// still having the correct parent_line_id references.
+
+async function commitBomLinesLevelMode(
+  rows: RowValidationResult[],
+  jobId: string,
+  orgId: string,
+  userId: string,
+  result: CommitResult,
+  db: any
+): Promise<void> {
+  // Collect all unique part numbers across every row.
+  const allSkuNums = new Set<string>()
+  for (const r of rows) {
+    const pn = String(r.mappedData['sku'] ?? '').trim()
+    if (pn) allSkuNums.add(pn)
+  }
+
+  const { data: skuRows } = await db.from('skus')
+    .select('id, part_number')
+    .eq('organization_id', orgId)
+    .in('part_number', Array.from(allSkuNums))
+
+  const skuMap = new Map<string, string>()
+  for (const s of skuRows ?? []) skuMap.set(s.part_number, s.id)
+
+  const missing = Array.from(allSkuNums).filter(pn => !skuMap.has(pn))
+  const autoCreated = await autoCreateMissingSkus(missing, rows, jobId, orgId, userId, skuMap, db)
+  await writeAutoCreatedSkuWarnings(autoCreated, rows, db)
+
+  // Split rows into BOM groups: each Level 0 row starts a new group.
+  const groups: RowValidationResult[][] = []
+  let current: RowValidationResult[] = []
+  for (const r of rows) {
+    const level = Number(r.mappedData['level'])
+    if (level === 0 && current.length > 0) {
+      groups.push(current)
+      current = []
+    }
+    current.push(r)
+  }
+  if (current.length > 0) groups.push(current)
+
+  let maxDepth    = 0
+  let errorCount  = result.errors.length
+
+  for (const group of groups) {
+    const rootRow = group[0]
+    const rootSku = String(rootRow.mappedData['sku'] ?? '').trim()
+    const rootId  = skuMap.get(rootSku)
+
+    if (!rootId) {
+      for (const r of group) {
+        result.errors.push({ row: r.rowNumber, error: `Root SKU "${rootSku}" could not be resolved` })
+        result.skipped++
+      }
+      continue
+    }
+
+    const bomResult = await findOrCreateBomVersion(rootId, orgId, userId, db)
+    if ('error' in bomResult) {
+      for (const r of group) result.errors.push({ row: r.rowNumber, error: bomResult.error })
+      continue
+    }
+
+    // Stack-based parent_line_id resolution.
+    // Each entry: the level and pre-generated UUID of the last inserted line at that depth.
+    type StackEntry = { level: number; lineId: string; partNumber: string }
+    const stack:       StackEntry[] = []
+    const ancestorSet  = new Set<string>([rootSku])  // root counts as an ancestor
+    const lineRecords: Array<Record<string, unknown> & { _rowNumber: number }> = []
+
+    for (const r of group.slice(1)) {  // skip the Level 0 root row
+      const level  = Number(r.mappedData['level'])
+      const pn     = String(r.mappedData['sku'] ?? '').trim()
+      const skuId  = skuMap.get(pn)
+
+      if (!skuId) {
+        result.errors.push({ row: r.rowNumber, error: `SKU "${pn}" could not be resolved` })
+        result.skipped++
+        continue
+      }
+
+      // Pop stack until the top entry's level is strictly less than current level.
+      // Each popped entry leaves the ancestor chain.
+      while (stack.length > 0 && stack[stack.length - 1].level >= level) {
+        ancestorSet.delete(stack.pop()!.partNumber)
+      }
+
+      // Circular reference: current SKU already appears in the active ancestor path.
+      if (ancestorSet.has(pn)) {
+        result.errors.push({
+          row:   r.rowNumber,
+          error: `Circular BOM reference: "${pn}" is already an ancestor in this BOM path`,
+        })
+        result.skipped++
+        continue
+      }
+
+      const parentLineId = stack.length > 0 ? stack[stack.length - 1].lineId : null
+      const lineId       = randomUUID()
+
+      lineRecords.push({
+        id:                lineId,
+        organization_id:   orgId,
+        bom_version_id:    bomResult.versionId,
+        parent_line_id:    parentLineId,
+        line_type:         'sku',
+        sku_id:            skuId,
+        quantity:          Number(r.mappedData['quantity']) || 1,
+        unit_of_measure:   'EA',
+        import_job_row_id: r.rowId ?? null,
+        created_by:        userId,
+        updated_by:        userId,
+        _rowNumber:        r.rowNumber,
+      })
+
+      stack.push({ level, lineId, partNumber: pn })
+      ancestorSet.add(pn)
+      if (level > maxDepth) maxDepth = level
+    }
+
+    for (let i = 0; i < lineRecords.length; i += DB_BATCH) {
+      const batch       = lineRecords.slice(i, i + DB_BATCH)
+      const insertBatch = batch.map(({ _rowNumber: _r, ...row }) => row)
+      const { error }   = await db.from('bom_lines').insert(insertBatch)
+      if (error) {
+        for (const r of batch) result.errors.push({ row: r._rowNumber as number, error: error.message })
+      } else {
+        result.committed += batch.length
+      }
+    }
+  }
+
+  const newErrors = result.errors.length - errorCount
+  result.bomSummary = {
+    totalRows:            rows.length,
+    bomLinesCreated:      result.committed,
+    maxDepth,
+    autoCreatedSkusCount: autoCreated.length,
+    warningCount:         rows.filter(r => r.status === 'warning').length + autoCreated.length,
+    errorCount:           newErrors,
+  }
+  await saveBomSummaryToJob(jobId, result.bomSummary, db)
+}
+
+async function saveBomSummaryToJob(
+  jobId: string,
+  summary: BomImportSummary,
+  db: any
+): Promise<void> {
+  const { data: job } = await db.from('import_jobs').select('metadata').eq('id', jobId).single()
+  const existing = (job?.metadata as Record<string, unknown>) ?? {}
+  await db.from('import_jobs')
+    .update({ metadata: { ...existing, bom_summary: summary } })
+    .eq('id', jobId)
 }
 
 // ─── Costs ───────────────────────────────────────────────────────────────────

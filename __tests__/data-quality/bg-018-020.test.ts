@@ -34,8 +34,8 @@ describe('buildIssueWorkbook', () => {
     expect(ws).toBeDefined()
     // A1 = 'Severity'
     expect(ws['A1']?.v).toBe('Severity')
-    // M1 = 'Detected At'
-    expect(ws['M1']?.v).toBe('Detected At')
+    // O1 = 'Detected At' (row_number=F, file_name=G added; shifts subsequent columns)
+    expect(ws['O1']?.v).toBe('Detected At')
   })
 
   it('writes issue data to the correct cells', async () => {
@@ -57,7 +57,7 @@ describe('buildIssueWorkbook', () => {
     expect(ws['A2']?.v).toBe('CRITICAL')
     expect(ws['B2']?.v).toBe('Cost Build')
     expect(ws['E2']?.v).toBe('ABC-100')
-    expect(ws['K2']?.v).toBe('Missing BOM')
+    expect(ws['M2']?.v).toBe('Missing BOM')  // error_message shifted to M
   })
 
   it('handles multi-sheet workbooks correctly', async () => {

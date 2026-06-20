@@ -20,6 +20,8 @@ export interface IssueRow {
   entity_type:     string           // e.g. 'SKU', 'BOM Line', 'Inventory Line'
   entity_id?:      string
   sku?:            string
+  row_number?:     number           // source row number in the imported file
+  file_name?:      string           // original uploaded filename (from import_jobs.file_name)
   site?:           string
   country?:        string
   import_job?:     string
@@ -38,6 +40,8 @@ const HEADERS: (keyof IssueRow)[] = [
   'entity_type',
   'entity_id',
   'sku',
+  'row_number',
+  'file_name',
   'site',
   'country',
   'import_job',
@@ -54,6 +58,8 @@ const HEADER_LABELS: Record<keyof IssueRow, string> = {
   entity_type:   'Entity Type',
   entity_id:     'Entity ID',
   sku:           'SKU',
+  row_number:    'Row Number',
+  file_name:     'File Name',
   site:          'Site',
   country:       'Country',
   import_job:    'Import Job',
@@ -69,7 +75,10 @@ const HEADER_LABELS: Record<keyof IssueRow, string> = {
 export function buildIssueSheet(issues: IssueRow[]): XLSX.WorkSheet {
   const headerRow = HEADERS.map(k => HEADER_LABELS[k])
   const dataRows  = issues.map(issue =>
-    HEADERS.map(k => (issue[k] as string | undefined) ?? '')
+    HEADERS.map(k => {
+      const v = issue[k as keyof IssueRow]
+      return v === undefined || v === null ? '' : v
+    })
   )
   const ws = XLSX.utils.aoa_to_sheet([headerRow, ...dataRows])
 
@@ -80,6 +89,8 @@ export function buildIssueSheet(issues: IssueRow[]): XLSX.WorkSheet {
     { wch: 16 }, // Entity Type
     { wch: 36 }, // Entity ID
     { wch: 20 }, // SKU
+    { wch: 12 }, // Row Number
+    { wch: 36 }, // File Name
     { wch: 14 }, // Site
     { wch: 10 }, // Country
     { wch: 36 }, // Import Job

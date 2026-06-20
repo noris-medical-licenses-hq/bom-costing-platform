@@ -30,7 +30,19 @@ export function validateRows(
   mapping: Record<string, string>,
   importType: ImportType
 ): RowValidationResult[] {
-  return rawRows.map((raw, i) => validateRow(i + 1, raw, mapping, importType))
+  const results = rawRows.map((raw, i) => validateRow(i + 1, raw, mapping, importType))
+
+  // Cross-row sequence validation for BOM Lines in level mode.
+  // Per-row validation (above) already checks that each level value is a non-negative
+  // integer. This pass adds structural rules that require the full row sequence.
+  if (importType === 'bom_lines') {
+    const hasLevel = results.some(
+      r => r.mappedData['level'] !== undefined && r.mappedData['level'] !== null
+    )
+    if (hasLevel) validateBomLevelSequence(results)
+  }
+
+  return results
 }
 
 function applyMapping(
@@ -123,6 +135,15 @@ function validateBomLines(
   errors: string[],
   warnings: string[]
 ): void {
+  // Level mode: detected when the 'level' key is present in the mapped data.
+  // In level mode the file encodes the BOM tree via a Level column rather than
+  // explicit parent_sku / child_sku pairs.
+  if ('level' in mapped) {
+    validateBomLinesLevelRow(mapped, errors, warnings)
+    return
+  }
+
+  // Flat mode (default): explicit parent/child columns required.
   requireField(mapped, 'parent_sku', errors)
   requireField(mapped, 'child_sku', errors)
   requireField(mapped, 'quantity', errors)
@@ -137,6 +158,69 @@ function validateBomLines(
   if (qty !== null && qty !== '') {
     const n = Number(qty)
     if (isNaN(n) || n <= 0) errors.push(`Quantity must be a positive number (got: ${qty})`)
+  }
+}
+
+function validateBomLinesLevelRow(
+  mapped: Record<string, string | null>,
+  errors: string[],
+  _warnings: string[]
+): void {
+  requireField(mapped, 'sku', errors)
+  requireField(mapped, 'quantity', errors)
+  requireField(mapped, 'level', errors)
+
+  const levelStr = String(mapped['level'] ?? '').trim()
+  if (levelStr !== '') {
+    const n = Number(levelStr)
+    if (!Number.isInteger(n) || n < 0) {
+      errors.push(`Level must be a non-negative integer (got: ${levelStr})`)
+    }
+  }
+
+  const qty = mapped['quantity']
+  if (qty !== null && qty !== '') {
+    const n = Number(qty)
+    if (isNaN(n) || n <= 0) errors.push(`Quantity must be a positive number (got: ${qty})`)
+  }
+}
+
+// Cross-row validation for level-mode BOM imports.
+// Mutates result objects in place — only called after all per-row results exist.
+function validateBomLevelSequence(results: RowValidationResult[]): void {
+  let prevLevel: number | null = null
+
+  for (const r of results) {
+    // Skip rows that already failed per-row validation or have no level value.
+    if (r.status === 'error') continue
+    const levelStr = String(r.mappedData['level'] ?? '').trim()
+    if (levelStr === '') continue
+    const level = Number(levelStr)
+    if (!Number.isInteger(level) || level < 0) continue  // caught per-row
+
+    if (prevLevel === null) {
+      // The very first valid level row must be Level 0.
+      if (level !== 0) {
+        r.errors.push('First BOM row must be Level 0 (the root / finished product)')
+        r.status = 'error'
+        // Do not set prevLevel — treat the next valid row as still being "first".
+        continue
+      }
+      prevLevel = 0
+      continue
+    }
+
+    if (level > prevLevel + 1) {
+      r.errors.push(
+        `Invalid level jump: ${prevLevel} → ${level}. ` +
+        `Level cannot increase by more than 1 from the previous row.`
+      )
+      r.status = 'error'
+      // Keep prevLevel unchanged so the next valid row checks against the
+      // last structurally-sound level, not the rejected jump target.
+    } else {
+      prevLevel = level
+    }
   }
 }
 

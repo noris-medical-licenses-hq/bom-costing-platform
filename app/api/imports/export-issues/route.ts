@@ -39,14 +39,18 @@ export async function GET(request: NextRequest) {
 
     if (rowErr) return NextResponse.json({ error: rowErr.message }, { status: 500 })
 
-    const now      = new Date().toISOString()
+    const now       = new Date().toISOString()
+    const fileName  = (job.file_name as string | null) ?? undefined
     const issues: IssueRow[] = []
 
     for (const row of (rows ?? []) as any[]) {
       const errors   = (row.errors   as string[] | null) ?? []
       const warnings = (row.warnings as string[] | null) ?? []
       const mapped   = (row.mapped_data as Record<string, unknown> | null) ?? {}
-      const sku      = String(mapped['sku'] ?? mapped['part_number'] ?? mapped['sku_part_number'] ?? '')
+      // Resolve SKU from whichever field is present in the mapped data
+      const sku      = String(
+        mapped['sku'] ?? mapped['part_number'] ?? mapped['sku_part_number'] ?? mapped['parent_sku'] ?? ''
+      ) || undefined
 
       if (errors.length > 0) {
         for (const msg of errors) {
@@ -55,7 +59,9 @@ export async function GET(request: NextRequest) {
             module:        'Import',
             entity_type:   job.import_type,
             entity_id:     row.id,
-            sku:           sku || undefined,
+            sku,
+            row_number:    row.row_number,
+            file_name:     fileName,
             import_job:    jobId,
             import_row:    row.id,
             error_code:    `ROW_${row.row_number}_ERROR`,
@@ -68,17 +74,23 @@ export async function GET(request: NextRequest) {
 
       if (warnings.length > 0) {
         for (const msg of warnings) {
+          // AUTO_CREATED_SKU warnings get a distinct error_code for filtering.
+          const isAutoCreate = msg.includes('automatically created during BOM import')
           issues.push({
             severity:      'WARNING',
             module:        'Import',
             entity_type:   job.import_type,
             entity_id:     row.id,
-            sku:           sku || undefined,
+            sku,
+            row_number:    row.row_number,
+            file_name:     fileName,
             import_job:    jobId,
             import_row:    row.id,
-            error_code:    `ROW_${row.row_number}_WARNING`,
+            error_code:    isAutoCreate ? 'AUTO_CREATED_SKU' : `ROW_${row.row_number}_WARNING`,
             error_message: msg,
-            suggested_fix: 'Review and confirm this is acceptable',
+            suggested_fix: isAutoCreate
+              ? 'Review the auto-created SKU in SKU Master and set make_buy if classification_status is needs_review'
+              : 'Review and confirm this is acceptable',
             detected_at:   now,
           })
         }
